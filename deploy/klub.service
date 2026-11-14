@@ -1,0 +1,26 @@
+# systemd услуга за сървъра на клуба. Това е отделен сървър: няма общо с horaotnaroda.bg.
+# Копира се в /etc/systemd/system/ и се пуска с:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now klub
+
+[Unit]
+Description=Клуб „Хора от Народа“: сървър на приложението
+After=network.target
+
+[Service]
+Type=simple
+User=klub
+WorkingDirectory=/opt/klub/server
+EnvironmentFile=/etc/klub/klub.env
+ExecStart=/usr/bin/node src/main.js
+Restart=on-failure
+RestartSec=5
+
+# Базата данни живее в /var/lib/klub и оцелява при рестарт и обновяване
+StateDirectory=klub
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

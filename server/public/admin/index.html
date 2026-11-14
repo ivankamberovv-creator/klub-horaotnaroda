@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="bg">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Клуб „Хора от Народа“: служители</title>
+<link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+<div class="tricolor"></div>
+
+<main class="wrap login" id="login">
+  <h1>Вход за служители</h1>
+  <form class="card" id="loginForm">
+    <label>Парола или ПИН на касата<input id="password" type="password" autocomplete="current-password" required></label>
+    <p class="err" id="loginErr" role="alert" hidden></p>
+    <button class="btn" type="submit">Влезте</button>
+  </form>
+</main>
+
+<div id="app" hidden>
+  <header class="top"><div class="in">
+    <b>Клуб „Хора от Народа“</b><span class="role" id="roleLabel"></span>
+    <button class="btn ghost small out" id="logout" type="button">Изход</button>
+  </div></header>
+  <main class="wrap">
+    <nav class="tabs" role="tablist" aria-label="Раздели">
+      <button role="tab" data-tab="kasa" aria-selected="true">Каса</button>
+      <button role="tab" data-tab="promotions" data-admin aria-selected="false">Промоции</button>
+      <button role="tab" data-tab="rewards" data-admin aria-selected="false">Награди</button>
+      <button role="tab" data-tab="customers" data-admin aria-selected="false">Клиенти</button>
+    </nav>
+
+    <section id="tab-kasa" class="stack">
+      <form class="card" id="lookupForm">
+        <h2>Сканирайте кода на клиента</h2>
+        <div class="row">
+          <label>Код от приложението<input id="cardCode" inputmode="numeric" autocomplete="off" placeholder="13 цифри" required></label>
+          <button class="btn fit" type="submit">Намерете</button>
+        </div>
+        <p class="muted">Баркод четецът пише кода в полето сам. Може и на ръка.</p>
+        <p class="err" id="lookupErr" role="alert" hidden></p>
+      </form>
+      <div id="customerBox" class="stack" hidden></div>
+    </section>
+
+    <section id="tab-promotions" class="stack" hidden>
+      <form class="card paper" id="promoForm">
+        <h2 id="promoFormTitle">Нова промоция</h2>
+        <input type="hidden" id="promoId">
+        <div class="row">
+          <label>Заглавие<input id="promoTitle" maxlength="80" required></label>
+          <label>Етикет (над заглавието)<input id="promoTag" maxlength="40" placeholder="Тази седмица"></label>
+        </div>
+        <label>Описание<textarea id="promoDescription" maxlength="300"></textarea></label>
+        <div class="row">
+          <label>Вид<select id="promoKind">
+            <option value="discount">Отстъпка в % (прилага я касата)</option>
+            <option value="double_points">Точки по няколко (множител)</option>
+            <option value="bonus_points">Точки отгоре</option>
+            <option value="info">Само съобщение</option>
+          </select></label>
+          <label id="promoValueLabel">Стойност<input id="promoValue" type="number" min="0" step="1"></label>
+          <label id="promoMinLabel">Минимална покупка, €<input id="promoMin" type="number" min="0" step="0.01"></label>
+        </div>
+        <div class="row">
+          <label>Начало (по желание)<input id="promoStarts" type="datetime-local"></label>
+          <label>Край (по желание)<input id="promoEnds" type="datetime-local"></label>
+          <label class="fit" style="align-self:center"><span><input id="promoActive" type="checkbox" checked style="width:auto;min-height:0"> Активна</span></label>
+        </div>
+        <p class="err" id="promoErr" role="alert" hidden></p>
+        <div class="row"><button class="btn fit" type="submit">Запазете</button><button class="btn ghost fit" type="button" id="promoReset">Изчистете</button></div>
+      </form>
+      <div class="tablewrap"><table><thead><tr><th>Промоция</th><th>Вид</th><th>До</th><th class="num">Активирали</th><th></th></tr></thead><tbody id="promoRows"></tbody></table></div>
+    </section>
+
+    <section id="tab-rewards" class="stack" hidden>
+      <form class="card paper" id="rewardForm">
+        <h2 id="rewardFormTitle">Нова награда</h2>
+        <input type="hidden" id="rewardId">
+        <div class="row">
+          <label>Име<input id="rewardTitle" maxlength="80" required></label>
+          <label>Точки<input id="rewardCost" type="number" min="1" step="1" required></label>
+        </div>
+        <label>Описание<textarea id="rewardDescription" maxlength="300"></textarea></label>
+        <label><span><input id="rewardActive" type="checkbox" checked style="width:auto;min-height:0"> Предлага се</span></label>
+        <p class="err" id="rewardErr" role="alert" hidden></p>
+        <div class="row"><button class="btn fit" type="submit">Запазете</button><button class="btn ghost fit" type="button" id="rewardReset">Изчистете</button></div>
+      </form>
+      <div class="tablewrap"><table><thead><tr><th>Награда</th><th class="num">Точки</th><th></th></tr></thead><tbody id="rewardRows"></tbody></table></div>
+    </section>
+
+    <section id="tab-customers" class="stack" hidden>
+      <div class="stats" id="stats"></div>
+      <label>Търсене по име, телефон или код<input id="customerQuery" type="search" autocomplete="off"></label>
+      <div class="tablewrap"><table><thead><tr><th>Клиент</th><th>Телефон</th><th>Код</th><th class="num">Точки</th><th class="num">Покупки</th><th class="num">Похарчено</th></tr></thead><tbody id="customerRows"></tbody></table></div>
+    </section>
+  </main>
+</div>
+<script src="/admin/admin.js"></script>
+</body>
+</html>

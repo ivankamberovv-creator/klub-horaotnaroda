@@ -1,0 +1,58 @@
+/* Цветовете са като на horaotnaroda.bg: бяло, зелено и червено. Тъмният режим ги предефинира. */
+:root{
+  --bg:#ffffff; --paper:#f3f8f5; --ink:#0f2e22; --muted:#4b6156; --line:#d3e1d8;
+  --green:#00785a; --green-deep:#0b5a42; --red:#b81f0e; --on:#ffffff;
+  --f-old:"Old Standard TT","Times New Roman",Georgia,serif;
+  --f-body:"Golos Text","Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root{
+  --bg:#0a1912; --paper:#0f231a; --ink:#f2f7f4; --muted:#a3b7ac; --line:#21392d;
+  --green:#15805f; --green-deep:#0c3f2f; --red:#ff7a68; color-scheme:dark } }
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.5}
+h1,h2,h3{font-family:var(--f-old);line-height:1.1;margin:0}
+h1{font-size:1.9rem} h2{font-size:1.5rem} h3{font-size:1.15rem}
+p{margin:0}
+[hidden]{display:none!important}
+.wrap{max-width:980px;margin:0 auto;padding:20px 16px 48px;display:grid;gap:18px}
+.stack{display:grid;gap:18px}
+.tricolor{height:8px;background:linear-gradient(var(--bg) 0 33.4%, #00966e 33.4% 66.7%, #d62612 66.7%)}
+header.top{background:var(--green-deep);color:#fff}
+header.top .in{max-width:980px;margin:0 auto;padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+header.top b{font-family:var(--f-old);font-size:1.3rem}
+header.top .role{font-size:.8rem;letter-spacing:.12em;text-transform:uppercase;color:#d6f5e8}
+header.top .out{margin-left:auto}
+nav.tabs{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:10px}
+nav.tabs button{min-height:44px;padding:0 16px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--ink);font:inherit;font-weight:600;cursor:pointer}
+nav.tabs button[aria-selected="true"]{background:var(--green);border-color:var(--green);color:var(--on)}
+.btn,button.btn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 16px;border:0;border-radius:4px;background:var(--green);color:var(--on);font:inherit;font-weight:700;text-decoration:none;cursor:pointer}
+.btn.ghost{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+.btn.small{min-height:36px;padding:0 12px;font-size:.9rem}
+.btn:disabled{opacity:.5;cursor:default}
+:focus-visible{outline:2px solid #d62612;outline-offset:2px}
+label{display:grid;gap:4px;font-size:.9rem;font-weight:600}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:10px 12px;min-height:44px;width:100%}
+textarea{min-height:76px;resize:vertical}
+.card{border:1px solid var(--line);border-radius:4px;padding:16px;display:grid;gap:12px;background:var(--bg)}
+.card.paper{background:var(--paper)}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:end}
+.row > *{flex:1 1 180px}
+.row > .fit{flex:0 0 auto}
+.muted{color:var(--muted)}
+.err{color:var(--red);font-weight:600}
+.ok{color:var(--green);font-weight:700}
+.eyebrow{font-size:.8rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--red)}
+.big{font-family:var(--f-old);font-size:2.4rem;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.stats .card{gap:4px}
+.list{display:grid;gap:0;border:1px solid var(--line);border-radius:4px}
+.list > div{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.list > div:last-child{border-bottom:0}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:4px}
+table{border-collapse:collapse;width:100%;font-size:.95rem}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:.8rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.off{opacity:.55}
+.login{max-width:380px;margin:8vh auto 0}

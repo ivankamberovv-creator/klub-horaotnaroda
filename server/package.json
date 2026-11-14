@@ -1,0 +1,21 @@
+{
+  "name": "klub-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Сървър на клуб „Хора от Народа“: клиенти, точки, промоции, награди и покупки",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/main.js",
+    "demo": "DEMO=1 node src/main.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.4.3",
+    "@fastify/static": "^10.1.11",
+    "better-sqlite3": "^13.2.0",
+    "fastify": "^5.12.8"
+  }
+}
