@@ -42,7 +42,7 @@ export function Promotions({ onChanged }: { onChanged: () => void }) {
             {p.tag ? <Eyebrow>{p.tag}</Eyebrow> : null}
             <Text style={{ fontFamily: fonts.old, fontSize: 22, lineHeight: 25, color: colors.ink }}>{p.title}</Text>
             {p.description ? <P muted style={{ fontSize: 15 }}>{p.description}</P> : null}
-            {effect(p) ? <P style={{ fontSize: 14, fontFamily: fonts.semi }}>{effect(p)}</P> : null}
+            {effect(p) && effect(p) !== p.title ? <P style={{ fontSize: 14, fontFamily: fonts.semi }}>{effect(p)}</P> : null}
             {p.ends_at ? <P muted style={{ fontSize: 13 }}>Важи до {day(p.ends_at)}</P> : null}
           </View>
           {p.activated ? (
