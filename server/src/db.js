@@ -1,5 +1,7 @@
 // Базата данни: един SQLite файл. Парите са в евроцентове (цели числа), времената са ISO низове в UTC.
-import Database from 'better-sqlite3';
+// Ползва се вграденият в Node SQLite (node:sqlite), за да няма нищо за компилиране при инсталиране:
+// на Windows външните пакети за SQLite искат Visual Studio.
+import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -136,6 +138,29 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 `;
 
+/**
+ * Добавя db.transaction(fn): връща функция, която изпълнява fn като едно цяло: или всичко се записва, или нищо.
+ * Ако вече тече такова изпълнение, вътрешното просто става част от външното.
+ */
+function addTransactions(db) {
+  let depth = 0;
+  db.transaction = (fn) => (...args) => {
+    if (depth > 0) return fn(...args);
+    db.exec('BEGIN IMMEDIATE');
+    depth++;
+    try {
+      const result = fn(...args);
+      db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    } finally {
+      depth--;
+    }
+  };
+}
+
 /** Довежда по-стара база до сегашния вид: добавя липсващите колони, без да пипа данните. */
 function upgrade(db) {
   const has = (table, column) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
@@ -168,9 +193,10 @@ function upgrade(db) {
 /** Отваря (и при нужда създава) базата. ':memory:' дава празна база за тестовете. */
 export function openDb(path = ':memory:') {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-  const db = new Database(path);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
+  const db = new DatabaseSync(path);
+  db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA foreign_keys = ON');
+  addTransactions(db);
   db.exec(SCHEMA);
   upgrade(db);
   return db;

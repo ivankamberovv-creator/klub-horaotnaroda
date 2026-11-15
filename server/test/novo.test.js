@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { openDb } from '../src/db.js';
 import { buildApp } from '../src/app.js';
 import { createDemoKasa } from '../src/connectors/demo.js';
@@ -156,7 +156,7 @@ test('началото идва с една заявка: профил, офер
 
 test('по-стара база се довежда до новия вид, без да се губят данни', () => {
   const path = join(mkdtempSync(join(tmpdir(), 'klub-db-')), 'old.db');
-  const old = new Database(path);
+  const old = new DatabaseSync(path);
   old.exec(`
     CREATE TABLE customers (id INTEGER PRIMARY KEY, phone TEXT NOT NULL UNIQUE, name TEXT NOT NULL DEFAULT '', card_code TEXT NOT NULL UNIQUE, kasa_id TEXT, created_at TEXT NOT NULL);
     CREATE TABLE promotions (id INTEGER PRIMARY KEY, title TEXT NOT NULL, tag TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL,
