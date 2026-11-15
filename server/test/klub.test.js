@@ -14,26 +14,28 @@ async function setup({ kasa = createDemoKasa(), cfg = config } = {}) {
   seedDemo(db);
   db.exec('UPDATE challenges SET active = 0'); // примерните мисии имат отделни проверки (zabavno.test.js)
   const sent = [];
-  const app = await buildApp({ db, config: cfg, sms: { send: async (phone, text) => sent.push({ phone, text }) }, kasa });
+  const app = await buildApp({ db, config: cfg, mail: { send: async (to, subject, text) => sent.push({ to, subject, text }) }, kasa });
   const call = async (method, url, body, token) => {
     const res = await app.inject({ method, url, payload: body, headers: token ? { authorization: `Bearer ${token}` } : {} });
     return { status: res.statusCode, body: res.body ? JSON.parse(res.body) : null };
   };
-  const login = async (phone = '0888123456') => {
-    const r = await call('POST', '/api/auth/request-code', { phone });
-    const v = await call('POST', '/api/auth/verify', { phone, code: r.body.demoCode });
+  const login = async (email = 'maria@primer.bg') => {
+    const r = await call('POST', '/api/auth/request-code', { email });
+    const v = await call('POST', '/api/auth/verify', { email, code: r.body.demoCode });
     return v.body;
   };
   const staff = async (password) => (await call('POST', '/api/staff/login', { password })).body.token;
   return { db, app, call, login, staff, sent };
 }
 
-test('телефонът се уеднаквява и се приемат само български мобилни номера', () => {
-  for (const ok of ['0888123456', '0888 123 456', '+359888123456', '00359 888 123 456', '359888123456', '0988-123-456']) {
-    assert.match(core.normalizePhone(ok), /^\+359[89]\d{8}$/, ok);
+test('имейлът се уеднаквява (малки букви, без интервали отстрани) и се приема само адрес с верен вид', () => {
+  assert.equal(core.normalizeEmail('  Maria.Petrova@Primer.BG '), 'maria.petrova@primer.bg');
+  for (const ok of ['a@b.bg', 'ivan+klub@gmail.com', 'ime_familia@poshta.example.com']) assert.equal(core.normalizeEmail(ok), ok, ok);
+  for (const bad of ['', 'maria', 'maria@', '@primer.bg', 'maria@primer', 'maria@primer.', 'maria@.bg', 'maria@@primer.bg', 'ma ria@primer.bg', 'maria@primer..bg', 'a'.repeat(250) + '@b.bg', null, undefined]) {
+    assert.equal(core.normalizeEmail(bad), null, String(bad));
   }
-  assert.equal(core.normalizePhone('0888 123 456'), '+359888123456');
-  for (const bad of ['', '123', '888123456', '02 987 6543', '+44 7700 900123', '08881234567', 'abc']) assert.equal(core.normalizePhone(bad), null, bad);
+  assert.equal(core.maskEmail('ivan.petrov@gmail.com'), 'iv…@gmail.com');
+  assert.equal(core.maskEmail('a@b.bg'), 'a…@b.bg');
 });
 
 test('кодът за касата е валиден EAN-13 и е различен за всеки клиент', () => {
@@ -50,29 +52,31 @@ test('кодът за касата е валиден EAN-13 и е различе
   assert.equal(codes.size, 200);
 });
 
-test('вход: код по SMS, нов клиент, после същият клиент', async () => {
+test('вход: код по имейл, нов клиент, после същият клиент', async () => {
   const t = await setup();
-  const r = await t.call('POST', '/api/auth/request-code', { phone: '0888 123 456' });
+  const r = await t.call('POST', '/api/auth/request-code', { email: ' Maria@Primer.bg ' });
   assert.equal(r.status, 200);
   assert.match(r.body.demoCode, /^\d{6}$/);
   assert.equal(t.sent.length, 1);
-  assert.equal(t.sent[0].phone, '+359888123456');
+  assert.equal(t.sent[0].to, 'maria@primer.bg');
+  assert.ok(t.sent[0].subject.includes(r.body.demoCode));
   assert.ok(t.sent[0].text.includes(r.body.demoCode));
 
-  const wrong = await t.call('POST', '/api/auth/verify', { phone: '0888123456', code: r.body.demoCode === '000000' ? '000001' : '000000' });
+  const wrong = await t.call('POST', '/api/auth/verify', { email: 'maria@primer.bg', code: r.body.demoCode === '000000' ? '000001' : '000000' });
   assert.equal(wrong.status, 400);
   assert.equal(wrong.body.error, 'code_wrong');
 
-  const v = await t.call('POST', '/api/auth/verify', { phone: '+359888123456', code: r.body.demoCode });
+  const v = await t.call('POST', '/api/auth/verify', { email: 'MARIA@primer.bg', code: r.body.demoCode });
   assert.equal(v.status, 200);
   assert.equal(v.body.isNew, true);
   assert.equal(v.body.me.points, 0);
+  assert.equal(v.body.me.email, 'maria@primer.bg');
   assert.ok(core.isValidEan13(v.body.me.cardCode));
 
   // кодът важи само веднъж
-  assert.equal((await t.call('POST', '/api/auth/verify', { phone: '0888123456', code: r.body.demoCode })).body.error, 'code_expired');
+  assert.equal((await t.call('POST', '/api/auth/verify', { email: 'maria@primer.bg', code: r.body.demoCode })).body.error, 'code_expired');
 
-  const again = await t.login('0888123456');
+  const again = await t.login('maria@primer.bg');
   assert.equal(again.isNew, false);
   assert.equal(again.me.cardCode, v.body.me.cardCode);
 
@@ -81,19 +85,27 @@ test('вход: код по SMS, нов клиент, после същият к
   assert.equal((await t.call('PUT', '/api/me', { name: 'М' }, v.body.token)).body.error, 'bad_name');
 });
 
-test('вход: грешен номер, много искания и много грешни опити се спират', async () => {
+test('вход: грешен адрес, много искания, много грешни опити и писмо, което не тръгва', async () => {
   const t = await setup();
-  assert.equal((await t.call('POST', '/api/auth/request-code', { phone: '12345' })).body.error, 'bad_phone');
-  for (let i = 0; i < 3; i++) assert.equal((await t.call('POST', '/api/auth/request-code', { phone: '0899111222' })).status, 200);
-  const fourth = await t.call('POST', '/api/auth/request-code', { phone: '0899111222' });
+  assert.equal((await t.call('POST', '/api/auth/request-code', { email: 'maria-bez-kliomba' })).body.error, 'bad_email');
+  assert.equal((await t.call('POST', '/api/auth/request-code', { phone: '0888123456' })).body.error, 'bad_email');
+  for (let i = 0; i < 3; i++) assert.equal((await t.call('POST', '/api/auth/request-code', { email: 'mnogo@primer.bg' })).status, 200);
+  const fourth = await t.call('POST', '/api/auth/request-code', { email: 'Mnogo@primer.bg' });
   assert.equal(fourth.status, 429);
 
-  const r = await t.call('POST', '/api/auth/request-code', { phone: '0899333444' });
+  const r = await t.call('POST', '/api/auth/request-code', { email: 'opiti@primer.bg' });
   const bad = r.body.demoCode === '111111' ? '222222' : '111111';
-  for (let i = 0; i < 5; i++) assert.equal((await t.call('POST', '/api/auth/verify', { phone: '0899333444', code: bad })).body.error, 'code_wrong');
+  for (let i = 0; i < 5; i++) assert.equal((await t.call('POST', '/api/auth/verify', { email: 'opiti@primer.bg', code: bad })).body.error, 'code_wrong');
   // след 5 грешни опита и верният код вече не минава
-  const locked = await t.call('POST', '/api/auth/verify', { phone: '0899333444', code: r.body.demoCode });
+  const locked = await t.call('POST', '/api/auth/verify', { email: 'opiti@primer.bg', code: r.body.demoCode });
   assert.equal(locked.status, 429);
+
+  // ако пощата откаже писмото, човекът получава ясно съобщение, а не „нещо се обърка“
+  const db = openDb(':memory:');
+  const app = await buildApp({ db, config, mail: { send: async () => { throw new Error('пощата не отговаря'); } }, kasa: createDemoKasa() });
+  const failed = await app.inject({ method: 'POST', url: '/api/auth/request-code', payload: { email: 'maria@primer.bg' } });
+  assert.equal(failed.statusCode, 502);
+  assert.equal(JSON.parse(failed.body).error, 'mail_failed');
 });
 
 test('без вход нищо от приложението не се вижда; чужда роля не минава', async () => {
@@ -163,7 +175,7 @@ test('един и същ документ от касата не носи точ
   assert.equal(one.body.items[0].name, 'VITALUX Детокс');
 
   // чужда покупка не се вижда
-  const other = await t.login('0899000111');
+  const other = await t.login('drug@primer.bg');
   assert.equal((await t.call('GET', `/api/purchases/${list.body.purchases[0].id}`, null, other.token)).status, 404);
   assert.equal((await t.call('GET', '/api/purchases', null, other.token)).body.purchases.length, 0);
 });
@@ -234,8 +246,10 @@ test('управление: промоции и награди се добавя
 
   const stats = await t.call('GET', '/api/admin/stats', null, admin);
   assert.equal(stats.body.customers, 1);
-  const found = await t.call('GET', '/api/admin/customers?q=888123', null, admin);
+  const found = await t.call('GET', '/api/admin/customers?q=maria@pri', null, admin);
   assert.equal(found.body.customers.length, 1);
+  assert.equal(found.body.customers[0].email, 'maria@primer.bg');
+  assert.equal((await t.call('GET', '/api/admin/customers?q=nyama@', null, admin)).body.customers.length, 0);
 });
 
 test('пробни покупки няма, когато касата е истинска', async () => {
@@ -248,7 +262,7 @@ test('пробни покупки няма, когато касата е ист�
 
 test('извън демото кодът за вход не се връща в отговора', async () => {
   const t = await setup({ cfg: { ...config, demo: false } });
-  const r = await t.call('POST', '/api/auth/request-code', { phone: '0888123456' });
+  const r = await t.call('POST', '/api/auth/request-code', { email: 'maria@primer.bg' });
   assert.deepEqual(r.body, { sent: true });
   assert.equal(t.sent.length, 1);
 });

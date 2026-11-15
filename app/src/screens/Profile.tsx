@@ -40,7 +40,7 @@ export function Profile({ me, onMe, onLogout, onDeleted }: { me: Me; onMe: (me: 
   return (
     <ScrollView contentContainerStyle={s.screen} keyboardShouldPersistTaps="handled">
       <H1>Профил</H1>
-      <View style={st.list}><Row label="Телефон" value={me.phone} last /></View>
+      <View style={st.list}><Row label="Имейл" value={me.email} last /></View>
 
       <View style={{ gap: 8 }}>
         <Text nativeID="profileNameLabel" style={st.label}>Име</Text>

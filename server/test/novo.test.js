@@ -21,33 +21,36 @@ async function setup(extra = {}) {
   db.exec('UPDATE challenges SET active = 0'); // примерните мисии имат отделни проверки (zabavno.test.js)
   seedStores(db);
   const config = { ...base, uploadDir: mkdtempSync(join(tmpdir(), 'klub-')), ...extra };
-  const app = await buildApp({ db, config, sms: { send: async () => {} }, kasa: createDemoKasa() });
+  const app = await buildApp({ db, config, mail: { send: async () => {} }, kasa: createDemoKasa() });
   const call = async (method, url, body, token) => {
     const res = await app.inject({ method, url, payload: body, headers: token ? { authorization: `Bearer ${token}` } : {} });
     let parsed = null;
     try { parsed = JSON.parse(res.body); } catch { /* не е JSON */ }
     return { status: res.statusCode, body: parsed, raw: res };
   };
-  const login = async (phone = '0888123456') => {
-    const r = await call('POST', '/api/auth/request-code', { phone });
-    return (await call('POST', '/api/auth/verify', { phone, code: r.body.demoCode })).body;
+  const login = async (email = 'maria@primer.bg') => {
+    const r = await call('POST', '/api/auth/request-code', { email });
+    return (await call('POST', '/api/auth/verify', { email, code: r.body.demoCode })).body;
   };
   const staff = async (password) => (await call('POST', '/api/staff/login', { password })).body.token;
   return { db, app, call, login, staff, config };
 }
 
-test('точки за добре дошли: веднъж, при първото влизане, и се виждат в историята', async () => {
+test('точки за добре дошли: не при записването, а веднъж, с първата покупка, и се виждат в историята', async () => {
   const t = await setup({ welcomePoints: 20 });
   const me = await t.login();
-  assert.equal(me.me.points, 20);
-  assert.equal((await t.login()).me.points, 20); // второ влизане не дава пак
+  assert.equal(me.me.points, 0); // само записване не носи точки: нов имейл се прави за минута
+  assert.equal((await t.login('vtori@primer.bg')).me.points, 0);
   const kasa = await t.staff('654321');
-  await t.call('POST', '/api/kasa/demo-purchase', { cardCode: me.me.cardCode, totalCents: 28000, shop: 'Варна, Трошево' }, kasa);
+  const first = await t.call('POST', '/api/kasa/demo-purchase', { cardCode: me.me.cardCode, totalCents: 20000, shop: 'Варна, Трошево' }, kasa);
+  assert.equal(first.body.points, 220); // 200 от покупката + 20 за добре дошли
+  const second = await t.call('POST', '/api/kasa/demo-purchase', { cardCode: me.me.cardCode, totalCents: 8000, shop: 'Варна, Трошево' }, kasa);
+  assert.equal(second.body.points, 300); // втората покупка не дава подаръка пак
   const rewards = (await t.call('GET', '/api/rewards', null, me.token)).body.rewards;
   await t.call('POST', `/api/rewards/${rewards[0].id}/redeem`, null, me.token);
   const h = (await t.call('GET', '/api/points-history', null, me.token)).body;
   assert.equal(h.points, 200);
-  assert.deepEqual(h.history.map((x) => [x.delta, x.label]), [[-100, 'Награда: Отстъпка 2 €'], [280, 'Покупка: Варна, Трошево'], [20, 'Добре дошли в клуба']]);
+  assert.deepEqual(h.history.map((x) => [x.delta, x.label]), [[-100, 'Награда: Отстъпка 2 €'], [80, 'Покупка: Варна, Трошево'], [20, 'Добре дошли в клуба'], [200, 'Покупка: Варна, Трошево']]);
 });
 
 test('рожден ден: записва се веднъж и точките идват само на деня, веднъж в годината', async () => {
@@ -164,6 +167,10 @@ test('по-стара база се довежда до новия вид, бе�
       value INTEGER NOT NULL DEFAULT 0, min_total_cents INTEGER NOT NULL DEFAULT 0, starts_at TEXT, ends_at TEXT, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
     CREATE TABLE points_ledger (id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE, delta INTEGER NOT NULL,
       reason TEXT NOT NULL CHECK (reason IN ('purchase','reward','reward_refund','adjustment')), ref TEXT, created_at TEXT NOT NULL);
+    CREATE TABLE otp_codes (phone TEXT PRIMARY KEY, code_hash TEXT NOT NULL, expires_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE otp_requests (id INTEGER PRIMARY KEY, phone TEXT NOT NULL, ip TEXT, at TEXT NOT NULL);
+    CREATE INDEX otp_requests_phone ON otp_requests(phone, at);
+    INSERT INTO otp_requests (phone, ip, at) VALUES ('+359888123456', '', '2026-11-14T00:00:00.000Z');
     INSERT INTO customers (phone, card_code, created_at) VALUES ('+359888123456', '2912345678905', '2026-11-14T00:00:00.000Z');
     INSERT INTO points_ledger (customer_id, delta, reason, ref, created_at) VALUES (1, 340, 'purchase', '1', '2026-11-14T00:00:00.000Z');
     INSERT INTO promotions (title, kind, created_at) VALUES ('Стара', 'info', '2026-11-14T00:00:00.000Z');
@@ -175,6 +182,19 @@ test('по-стара база се довежда до новия вид, бе�
   assert.equal(core.balance(db, 1), 360);
   assert.equal(core.listPromotions(db, 1)[0].image_url, '');
   assert.equal(core.customerSummary(db, 1).birthday, null);
+  // клиентът беше с телефон: записът, кодът на картата и точките остават, а входът вече е с имейл
+  const kept = core.customerSummary(db, 1);
+  assert.equal(kept.email, 'tel359888123456@bez-imeil.invalid');
+  assert.equal(kept.cardCode, '2912345678905');
+  assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  const { code } = core.requestCode(db, 'nov@primer.bg');
+  const fresh = core.verifyCode(db, 'nov@primer.bg', code);
+  assert.equal(fresh.isNew, true);
+  assert.equal(fresh.customer.id, 2);
+  // външните ключове още работят: изтрит клиент отнася и точките си
+  db.prepare('DELETE FROM customers WHERE id = 1').run();
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM points_ledger WHERE customer_id = 1').get().n, 0);
   db.close();
   openDb(path).close(); // второ отваряне не прави нищо
 });

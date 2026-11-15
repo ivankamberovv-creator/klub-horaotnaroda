@@ -8,7 +8,9 @@ export const API_URL = (fromEnv ?? (Platform.OS === 'web' ? '' : 'http://localho
 export const mediaUrl = (url: string) => (url.startsWith('/') ? API_URL + url : url);
 
 export type Me = {
-  id: number; name: string; phone: string; cardCode: string; points: number; pointsPerEuro: number;
+  id: number; name: string; email: string; cardCode: string; points: number; pointsPerEuro: number;
+  /** точки за добре дошли, които чакат първата покупка; 0, ако няма */
+  welcomePoints: number;
   nextReward: { title: string; costPoints: number; missing: number } | null;
   activePromotions: number; pendingRewards: number;
   birthday: string | null; favoriteStoreId: number | null; unreadNews: number; scratchCards: number;
@@ -65,8 +67,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 export const api = {
-  requestCode: (phone: string) => call<{ sent: true; demoCode?: string }>('POST', '/api/auth/request-code', { phone }),
-  verify: (phone: string, code: string) => call<{ token: string; isNew: boolean; me: Me }>('POST', '/api/auth/verify', { phone, code }),
+  requestCode: (email: string) => call<{ sent: true; demoCode?: string }>('POST', '/api/auth/request-code', { email }),
+  verify: (email: string, code: string) => call<{ token: string; isNew: boolean; me: Me }>('POST', '/api/auth/verify', { email, code }),
   logout: () => call<{ ok: true }>('POST', '/api/auth/logout'),
   me: () => call<Me>('GET', '/api/me'),
   setName: (name: string) => call<Me>('PUT', '/api/me', { name }),

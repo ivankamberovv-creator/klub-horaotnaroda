@@ -25,18 +25,22 @@ const t = (name, cond, info = '') => { cond ? ok++ : fail++; console.log((cond ?
   };
 
   // ---- вход ----
-  await p.goto(SRV); await p.waitForSelector(id('phone'));
+  await p.goto(SRV); await p.waitForSelector(id('email'));
   t('страницата е на български и има манифест', await p.evaluate(() => document.documentElement.lang === 'bg' && Boolean(document.querySelector('link[rel="manifest"]'))));
   await shot('01-vhod');
-  const number = '0888' + String(Math.floor(Math.random() * 1e6)).padStart(6, '0');
-  await p.fill(id('phone'), number); await p.click(id('sendCode')); await p.waitForSelector(id('code'));
+  t('вход: без верен имейл бутонът не работи', await p.$eval(id('sendCode'), (x) => x.getAttribute('aria-disabled') === 'true'));
+  await p.fill(id('email'), 'maria');
+  t('вход: „maria“ не е имейл', await p.$eval(id('sendCode'), (x) => x.getAttribute('aria-disabled') === 'true'));
+  const address = 'Maria' + String(Math.floor(Math.random() * 1e6)).padStart(6, '0') + '@primer.bg';
+  await p.fill(id('email'), address); await p.click(id('sendCode')); await p.waitForSelector(id('code'));
+  t('вход: казва на кой адрес е пратен кодът', (await body()).includes(address));
   const demo = (await txt('demoCode')).match(/\d{6}/)[0];
   await p.fill(id('code'), demo === '000000' ? '111111' : '000000'); await p.click(id('verify')); await p.waitForTimeout(500);
   t('грешен код: съобщение', (await body()).includes('Кодът не е верен'));
   await p.fill(id('code'), demo); await p.click(id('verify')); await p.waitForSelector(id('name'));
   await p.fill(id('name'), 'Мария Петрова'); await p.click(id('saveName')); await p.waitForSelector(id('points'));
   await p.waitForSelector('[data-testid^="offerTile-"]');
-  t('вход: нов клиент с 20 точки за добре дошли', await becomes('points', 20), await txt('points'));
+  t('вход: нов клиент с 0 точки и обещан подарък при първата покупка', await becomes('points', 0) && (await txt('welcomeGift')).includes('+20 точки с първата Ви покупка'), await txt('points'));
   t('началото поздравява по име', (await body()).includes('Здравейте, Мария Петрова'));
   t('началото показва офертите и новините', (await p.$$('[data-testid^="offerTile-"]')).length === 4 && (await body()).includes('Добре дошли в клуба'));
   t('началото показва две мисии с напредък 0', (await p.$$('[data-testid^="challenge-"]')).length === 2 && (await body()).includes('0 от 3 покупки'));
@@ -72,6 +76,7 @@ const t = (name, cond, info = '') => { cond ? ok++ : fail++; console.log((cond ?
   await k.fill('#cardCode', code); await k.click('#lookupForm button'); await k.waitForSelector('#customerBox:not([hidden])');
   const box = await k.textContent('#customerBox');
   t('каса: намира клиента и активираната оферта', box.includes('Мария Петрова') && box.includes('Двойни точки'));
+  t('каса: вижда само началото на имейла, не целия адрес', box.includes('имейл ma…@primer.bg') && !box.includes(address.toLowerCase()), box.slice(0, 120));
   await k.fill('#customerBox input[inputmode="decimal"]', '170,00'); await k.click('#customerBox form button'); await k.waitForTimeout(600);
   const said = await k.textContent('#customerBox');
   t('каса: 170 € с двойни точки = 340 точки', said.includes('начислени са 340 точки'));
@@ -80,8 +85,8 @@ const t = (name, cond, info = '') => { cond ? ok++ : fail++; console.log((cond ?
 
   // ---- празникът след покупка, мисии и талон ----
   await tab('home');
-  t('началото брои до 460 точки (20 + 340 + 100 от мисията)', await becomes('points', 460), await txt('points'));
-  t('излиза „+440 точки“', (await p.$(id('gainToast'))) !== null && (await txt('gainToast')) === '+440 точки');
+  t('началото брои до 460 точки (340 + 20 за добре дошли + 100 от мисията)', await becomes('points', 460), await txt('points'));
+  t('излиза „+460 точки“, а обещаният подарък вече го няма', (await p.$(id('gainToast'))) !== null && (await txt('gainToast')) === '+460 точки' && (await p.$(id('welcomeGift'))) === null);
   await shot('06-nachalo-sled-pokupka');
   const home = await body();
   t('началото показва талона, напредъка по мисиите и последната покупка', Boolean(await p.$(id('toScratch'))) && home.includes('1 от 3 покупки') && home.includes('Изпълнена') && home.includes('170,00 €'));
@@ -124,9 +129,9 @@ const t = (name, cond, info = '') => { cond ? ok++ : fail++; console.log((cond ?
   await noOverflow('награди');
   await p.click(id('toHistory')); await p.waitForSelector(id('history-0'));
   const rows = await p.$$eval('[data-testid^="history-"]', (els) => els.map((e) => e.textContent));
-  t('история: награда, талон, мисия, покупка и добре дошли, най-новото отгоре', rows.length === 5 && rows[0].includes('Награда: Отстъпка 5 €') && rows[0].includes('-250')
+  t('история: награда, талон, мисия, добре дошли и покупка, най-новото отгоре', rows.length === 5 && rows[0].includes('Награда: Отстъпка 5 €') && rows[0].includes('-250')
     && rows[1].includes('Талон за изтриване') && rows[1].includes('+' + won) && rows[2].includes('Изпълнена мисия: Пазарувайте за 100 €') && rows[2].includes('+100')
-    && rows[3].includes('Покупка: Пробен магазин') && rows[3].includes('+340') && rows[4].includes('Добре дошли в клуба') && rows[4].includes('+20'), rows.join(' | '));
+    && rows[3].includes('Добре дошли в клуба') && rows[3].includes('+20') && rows[4].includes('Покупка: Пробен магазин') && rows[4].includes('+340'), rows.join(' | '));
   await shot('12-istoria');
   await noOverflow('история');
 
@@ -224,7 +229,9 @@ const t = (name, cond, info = '') => { cond ? ok++ : fail++; console.log((cond ?
   t('с интернет лентата изчезва и точките са верни', (await p.$(id('offlineBar'))) === null && await becomes('points', total - 250));
 
   // ---- изход ----
-  await more('profile'); await p.click(id('logout')); await p.waitForSelector(id('phone'));
+  await more('profile');
+  t('профил: показва имейла с малки букви', (await body()).includes(address.toLowerCase()));
+  await p.click(id('logout')); await p.waitForSelector(id('email'));
   t('изход: връща към входа', true);
 
   const head = await (await fetch(SRV + '/sw.js')).headers.get('cache-control');

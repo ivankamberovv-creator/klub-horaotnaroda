@@ -1,4 +1,4 @@
-// Цялата логика на клуба: вход с телефон, кодове за касата, точки, промоции, награди и покупки.
+// Цялата логика на клуба: вход с имейл, кодове за касата, точки, промоции, награди и покупки.
 // Функциите приемат базата като първи аргумент и не знаят нищо за HTTP.
 import crypto from 'node:crypto';
 
@@ -11,15 +11,12 @@ export class AppError extends Error {
   constructor(code, message, status = 400) { super(message); this.code = code; this.status = status; }
 }
 
-/** 0888 123 456, +359 888 123 456, 00359888123456 → +359888123456. Само български мобилни номера; иначе null. */
-export function normalizePhone(raw) {
-  let d = String(raw ?? '').replace(/\D/g, '');
-  if (d.startsWith('00359')) d = d.slice(5);
-  else if (d.startsWith('359')) d = d.slice(3);
-  else if (d.startsWith('0')) d = d.slice(1);
-  else return null;
-  return /^[89]\d{8}$/.test(d) ? '+359' + d : null;
+/** „ Ivan@Example.COM “ → „ivan@example.com“. Проверява само вида на адреса; дали съществува, показва кодът. Иначе null. */
+export function normalizeEmail(raw) {
+  const email = String(raw ?? '').trim().toLowerCase();
+  return email.length <= 254 && /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(email) ? email : null;
 }
+const BAD_EMAIL = 'Въведете имейл адрес, например ime@primer.bg.';
 
 /** Контролната цифра на EAN-13 за първите 12 цифри */
 export function ean13CheckDigit(first12) {
@@ -39,52 +36,51 @@ export function newCardCode(db, prefix = '29') {
   }
 }
 
-// ---- вход с телефон и еднократен код ----
+// ---- вход с имейл и еднократен код ----
 
-const OTP_MINUTES = 10, OTP_MAX_ATTEMPTS = 5, OTP_PER_PHONE = 3, OTP_PER_IP = 10, OTP_WINDOW_MIN = 15;
+const OTP_MINUTES = 10, OTP_MAX_ATTEMPTS = 5, OTP_PER_EMAIL = 3, OTP_PER_IP = 10, OTP_WINDOW_MIN = 15;
 
-/** Създава еднократен код за номера и го връща, за да бъде пратен. Ограничава броя искания. */
-export function requestCode(db, rawPhone, ip = '') {
-  const phone = normalizePhone(rawPhone);
-  if (!phone) throw new AppError('bad_phone', 'Въведете български мобилен номер, например 0888 123 456.');
+/** Създава еднократен код за адреса и го връща, за да бъде пратен. Ограничава броя искания. */
+export function requestCode(db, rawEmail, ip = '') {
+  const email = normalizeEmail(rawEmail);
+  if (!email) throw new AppError('bad_email', BAD_EMAIL);
   const since = new Date(Date.now() - OTP_WINDOW_MIN * 60_000).toISOString();
-  const perPhone = db.prepare('SELECT COUNT(*) n FROM otp_requests WHERE phone = ? AND at > ?').get(phone, since).n;
+  const perEmail = db.prepare('SELECT COUNT(*) n FROM otp_requests WHERE email = ? AND at > ?').get(email, since).n;
   const perIp = ip ? db.prepare('SELECT COUNT(*) n FROM otp_requests WHERE ip = ? AND at > ?').get(ip, since).n : 0;
-  if (perPhone >= OTP_PER_PHONE || perIp >= OTP_PER_IP) {
+  if (perEmail >= OTP_PER_EMAIL || perIp >= OTP_PER_IP) {
     throw new AppError('too_many', `Поискахте твърде много кодове. Опитайте пак след ${OTP_WINDOW_MIN} минути.`, 429);
   }
   const code = String(crypto.randomInt(0, 10 ** 6)).padStart(6, '0');
-  db.prepare('INSERT INTO otp_requests (phone, ip, at) VALUES (?, ?, ?)').run(phone, ip, nowIso());
-  db.prepare('INSERT OR REPLACE INTO otp_codes (phone, code_hash, expires_at, attempts) VALUES (?, ?, ?, 0)')
-    .run(phone, sha(phone + ':' + code), inMinutes(OTP_MINUTES));
-  return { phone, code };
+  db.prepare('INSERT INTO otp_requests (email, ip, at) VALUES (?, ?, ?)').run(email, ip, nowIso());
+  db.prepare('INSERT OR REPLACE INTO otp_codes (email, code_hash, expires_at, attempts) VALUES (?, ?, ?, 0)')
+    .run(email, sha(email + ':' + code), inMinutes(OTP_MINUTES));
+  return { email, code };
 }
 
-/** Проверява кода; при успех намира или създава клиента и отваря сесия. */
-export function verifyCode(db, rawPhone, code, { cardPrefix = '29', sessionDays = 180, welcomePoints = 0 } = {}) {
-  const phone = normalizePhone(rawPhone);
-  if (!phone) throw new AppError('bad_phone', 'Въведете български мобилен номер, например 0888 123 456.');
-  const row = db.prepare('SELECT * FROM otp_codes WHERE phone = ?').get(phone);
+/**
+ * Проверява кода; при успех намира или създава клиента и отваря сесия.
+ * Точките за добре дошли не се дават тук, а при първата покупка (вижте recordPurchase):
+ * нов имейл се прави за минута и иначе един човек би си събрал подаръка много пъти.
+ */
+export function verifyCode(db, rawEmail, code, { cardPrefix = '29', sessionDays = 180 } = {}) {
+  const email = normalizeEmail(rawEmail);
+  if (!email) throw new AppError('bad_email', BAD_EMAIL);
+  const row = db.prepare('SELECT * FROM otp_codes WHERE email = ?').get(email);
   if (!row || row.expires_at < nowIso()) throw new AppError('code_expired', 'Кодът е изтекъл. Поискайте нов.');
   if (row.attempts >= OTP_MAX_ATTEMPTS) throw new AppError('too_many_attempts', 'Твърде много грешни опити. Поискайте нов код.', 429);
-  const given = Buffer.from(sha(phone + ':' + String(code ?? '').trim()));
+  const given = Buffer.from(sha(email + ':' + String(code ?? '').trim()));
   if (!crypto.timingSafeEqual(given, Buffer.from(row.code_hash))) {
-    db.prepare('UPDATE otp_codes SET attempts = attempts + 1 WHERE phone = ?').run(phone);
+    db.prepare('UPDATE otp_codes SET attempts = attempts + 1 WHERE email = ?').run(email);
     throw new AppError('code_wrong', 'Кодът не е верен.');
   }
   return db.transaction(() => {
-    db.prepare('DELETE FROM otp_codes WHERE phone = ?').run(phone);
-    let customer = db.prepare('SELECT * FROM customers WHERE phone = ?').get(phone);
+    db.prepare('DELETE FROM otp_codes WHERE email = ?').run(email);
+    let customer = db.prepare('SELECT * FROM customers WHERE email = ?').get(email);
     const isNew = !customer;
     if (isNew) {
-      const info = db.prepare('INSERT INTO customers (phone, card_code, created_at) VALUES (?, ?, ?)')
-        .run(phone, newCardCode(db, cardPrefix), nowIso());
+      const info = db.prepare('INSERT INTO customers (email, card_code, created_at) VALUES (?, ?, ?)')
+        .run(email, newCardCode(db, cardPrefix), nowIso());
       customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(info.lastInsertRowid);
-      // точки за добре дошли, ако са включени
-      if (welcomePoints > 0) {
-        db.prepare("INSERT INTO points_ledger (customer_id, delta, reason, ref, created_at) VALUES (?, ?, 'bonus', 'welcome', ?)")
-          .run(customer.id, welcomePoints, nowIso());
-      }
     }
     return { token: createSession(db, 'customer', customer.id, sessionDays * 24 * 60), customer, isNew };
   })();
@@ -283,7 +279,7 @@ export function pointsFor(db, customerId, totalCents, at, pointsPerEuro = 1) {
  * Записва покупка, дошла от касата, и начислява точките. Втори запис на същия документ не прави нищо.
  * p: { source, externalId, cardCode | customerId, shop, totalCents, discountCents, purchasedAt, items: [{ name, quantity, totalCents }] }
  */
-export function recordPurchase(db, p, { pointsPerEuro = 1, scratch = null } = {}) {
+export function recordPurchase(db, p, { pointsPerEuro = 1, scratch = null, welcomePoints = 0 } = {}) {
   return db.transaction(() => {
     const customer = p.customerId ? getCustomer(db, p.customerId) : getCustomerByCard(db, p.cardCode);
     if (!customer) return { skipped: 'unknown_customer' };
@@ -299,6 +295,11 @@ export function recordPurchase(db, p, { pointsPerEuro = 1, scratch = null } = {}
     if (points) {
       db.prepare("INSERT INTO points_ledger (customer_id, delta, reason, ref, created_at) VALUES (?, ?, 'purchase', ?, ?)")
         .run(customer.id, points, String(id), nowIso());
+    }
+    // точките за добре дошли идват с първата покупка, веднъж
+    if (welcomePoints > 0 && !db.prepare("SELECT 1 FROM points_ledger WHERE customer_id = ? AND reason = 'bonus' AND ref = 'welcome'").get(customer.id)) {
+      db.prepare("INSERT INTO points_ledger (customer_id, delta, reason, ref, created_at) VALUES (?, ?, 'bonus', 'welcome', ?)")
+        .run(customer.id, welcomePoints, nowIso());
     }
     // забавната част: талон за изтриване и напредък по мисиите
     const scratchCard = createScratchCard(db, customer.id, id, p.totalCents, scratch);
@@ -437,12 +438,14 @@ export function adminSaveChallenge(db, body, id = null) {
 // ---- обобщение за приложението и за касата ----
 
 /** Всичко за началния екран на приложението */
-export function customerSummary(db, customerId, { pointsPerEuro = 1 } = {}) {
+export function customerSummary(db, customerId, { pointsPerEuro = 1, welcomePoints = 0 } = {}) {
   const c = getCustomer(db, customerId);
   const points = balance(db, customerId);
   const next = listRewards(db).find((r) => r.cost_points > points);
   return {
-    id: c.id, name: c.name, phone: c.phone, cardCode: c.card_code, points, pointsPerEuro,
+    id: c.id, name: c.name, email: c.email, cardCode: c.card_code, points, pointsPerEuro,
+    // подаръкът за добре дошли, който още чака първата покупка; 0, ако няма такъв или вече е даден
+    welcomePoints: welcomePoints > 0 && !db.prepare("SELECT 1 FROM points_ledger WHERE customer_id = ? AND reason = 'bonus' AND ref = 'welcome'").get(customerId) ? welcomePoints : 0,
     birthday: formatBirthday(c.birthday), favoriteStoreId: c.favorite_store_id ?? null, unreadNews: unreadNews(db, c),
     scratchCards: db.prepare("SELECT COUNT(*) n FROM scratch_cards WHERE customer_id = ? AND status = 'new'").get(customerId).n,
     nextReward: next ? { title: next.title, costPoints: next.cost_points, missing: next.cost_points - points } : null,
@@ -451,12 +454,18 @@ export function customerSummary(db, customerId, { pointsPerEuro = 1 } = {}) {
   };
 }
 
+/** „ivan.petrov@gmail.com“ → „iv…@gmail.com“: касиерът вижда достатъчно, за да познае клиента, но не целия адрес */
+export const maskEmail = (email) => {
+  const at = email.lastIndexOf('@');
+  return email.slice(0, Math.min(2, at)) + '…' + email.slice(at);
+};
+
 /** Какво вижда касиерът, когато сканира кода на клиента */
 export function kasaLookup(db, cardCode) {
   const c = getCustomerByCard(db, cardCode);
   if (!c) throw new AppError('no_customer', 'Няма клиент с такъв код.', 404);
   return {
-    customer: { id: c.id, name: c.name, cardCode: c.card_code, phoneTail: c.phone.slice(-3) },
+    customer: { id: c.id, name: c.name, cardCode: c.card_code, emailHint: maskEmail(c.email) },
     points: balance(db, c.id),
     promotions: activePromotions(db, c.id),
     pendingRewards: db.prepare("SELECT id, reward_title, points, created_at FROM redemptions WHERE customer_id = ? AND status = 'pending' ORDER BY id").all(c.id),
@@ -533,11 +542,11 @@ export function adminSaveReward(db, body, id = null) {
 
 export function adminListCustomers(db, q = '', limit = 100) {
   const like = '%' + String(q).trim() + '%';
-  return db.prepare(`SELECT c.id, c.name, c.phone, c.card_code, c.created_at,
+  return db.prepare(`SELECT c.id, c.name, c.email, c.card_code, c.created_at,
       (SELECT COALESCE(SUM(delta), 0) FROM points_ledger l WHERE l.customer_id = c.id) points,
       (SELECT COUNT(*) FROM purchases p WHERE p.customer_id = c.id) purchases,
       (SELECT COALESCE(SUM(total_cents), 0) FROM purchases p WHERE p.customer_id = c.id) spent_cents
-    FROM customers c WHERE c.name LIKE @like OR c.phone LIKE @like OR c.card_code LIKE @like
+    FROM customers c WHERE c.name LIKE @like OR c.email LIKE @like OR c.card_code LIKE @like
     ORDER BY c.id DESC LIMIT @limit`).all({ like, limit });
 }
 export const adminStats = (db) => ({

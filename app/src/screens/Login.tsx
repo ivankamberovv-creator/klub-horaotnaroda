@@ -1,4 +1,4 @@
-// Вход: телефон → код по SMS → (при първо влизане) име.
+// Вход: имейл → код, пратен на него → (при първо влизане) име.
 import { useState } from 'react';
 import { Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { api, Me, setToken } from '../api';
@@ -8,8 +8,8 @@ import { colors, fonts, radius } from '../theme';
 type Props = { onDone: (token: string, me: Me) => void };
 
 export function Login({ onDone }: Props) {
-  const [step, setStep] = useState<'phone' | 'code' | 'name'>('phone');
-  const [phone, setPhone] = useState('');
+  const [step, setStep] = useState<'email' | 'code' | 'name'>('email');
+  const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [demoCode, setDemoCode] = useState('');
@@ -23,13 +23,13 @@ export function Login({ onDone }: Props) {
     try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : 'Нещо се обърка. Опитайте пак.'); } finally { setBusy(false); }
   };
   const sendCode = () => guard(async () => {
-    const r = await api.requestCode(phone);
+    const r = await api.requestCode(email.trim());
     setDemoCode(r.demoCode ?? '');
     setCode('');
     setStep('code');
   });
   const verify = () => guard(async () => {
-    const r = await api.verify(phone, code);
+    const r = await api.verify(email.trim(), code);
     if (r.me.name) onDone(r.token, r.me);
     else { setSession({ token: r.token, me: r.me }); setStep('name'); }
   });
@@ -49,35 +49,35 @@ export function Login({ onDone }: Props) {
           <Text style={st.sub}>Клуб</Text>
         </View>
 
-        {step === 'phone' && (
+        {step === 'email' && (
           <View style={{ gap: 14 }}>
-            <H1>Влезте с телефона си</H1>
-            <P muted>Ще Ви пратим код с SMS. С него влизате и събирате точки от всяка покупка.</P>
+            <H1>Влезте с имейла си</H1>
+            <P muted>Ще Ви пратим писмо с код. С него влизате и събирате точки от всяка покупка.</P>
             <View style={{ gap: 6 }}>
-              <Text nativeID="phoneLabel" style={st.label}>Мобилен телефон</Text>
-              <TextInput testID="phone" accessibilityLabelledBy="phoneLabel" style={st.input} value={phone} onChangeText={setPhone}
-                keyboardType="phone-pad" autoComplete="tel" textContentType="telephoneNumber" placeholder="0888 123 456"
-                placeholderTextColor={colors.muted} returnKeyType="done" onSubmitEditing={sendCode} />
+              <Text nativeID="emailLabel" style={st.label}>Имейл</Text>
+              <TextInput testID="email" accessibilityLabelledBy="emailLabel" style={st.input} value={email} onChangeText={setEmail}
+                keyboardType="email-address" inputMode="email" autoComplete="email" textContentType="emailAddress" autoCapitalize="none" autoCorrect={false}
+                maxLength={254} placeholder="ime@primer.bg" placeholderTextColor={colors.muted} returnKeyType="done" onSubmitEditing={sendCode} />
             </View>
             <ErrorText>{error}</ErrorText>
-            <Button testID="sendCode" title="Изпратете ми код" onPress={sendCode} busy={busy} disabled={phone.trim().length < 9} />
+            <Button testID="sendCode" title="Изпратете ми код" onPress={sendCode} busy={busy} disabled={!/^\S+@\S+\.\S+$/.test(email.trim())} />
           </View>
         )}
 
         {step === 'code' && (
           <View style={{ gap: 14 }}>
             <H1>Въведете кода</H1>
-            <P muted>Пратихме 6-цифрен код на {phone}. Важи 10 минути.</P>
-            {demoCode ? <P testID="demoCode" style={st.demo}>Демо: SMS не се праща. Кодът е {demoCode}.</P> : null}
+            <P muted>Пратихме писмо с 6-цифрен код на {email.trim()}. Важи 10 минути. Ако не го виждате, погледнете и в папка „Спам“.</P>
+            {demoCode ? <P testID="demoCode" style={st.demo}>Демо: писмо не се праща. Кодът е {demoCode}.</P> : null}
             <View style={{ gap: 6 }}>
-              <Text nativeID="codeLabel" style={st.label}>Код от SMS</Text>
+              <Text nativeID="codeLabel" style={st.label}>Код от писмото</Text>
               <TextInput testID="code" accessibilityLabelledBy="codeLabel" style={[st.input, st.code]} value={code}
                 onChangeText={(t) => setCode(t.replace(/\D/g, '').slice(0, 6))} keyboardType="number-pad" autoComplete="one-time-code"
                 textContentType="oneTimeCode" maxLength={6} autoFocus returnKeyType="done" onSubmitEditing={verify} />
             </View>
             <ErrorText>{error}</ErrorText>
             <Button testID="verify" title="Влезте" onPress={verify} busy={busy} disabled={code.length !== 6} />
-            <Button title="Друг номер или нов код" kind="ghost" onPress={() => { setStep('phone'); setError(''); }} />
+            <Button title="Друг имейл или нов код" kind="ghost" onPress={() => { setStep('email'); setError(''); }} />
           </View>
         )}
 

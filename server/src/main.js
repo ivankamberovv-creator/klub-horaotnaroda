@@ -4,7 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
 import { buildApp } from './app.js';
-import { createSms } from './sms.js';
+import { createMail } from './mail.js';
 import { createKasa } from './connectors/index.js';
 import { seedDemo, seedDemoMissions, seedStores } from './seed.js';
 import { recordPurchase, getSetting, setSetting, nowIso, parsePrizes } from './core.js';
@@ -33,7 +33,12 @@ const config = {
   trustProxy: env.TRUST_PROXY === '1',
   kasa: env.KASA || 'demo',
   yanak: { baseUrl: env.YANAK_URL || undefined, email: env.YANAK_EMAIL, username: env.YANAK_USERNAME },
-  smsProvider: env.SMS_PROVIDER || 'demo',
+  // писмата с кода за вход: demo само ги печата, smtp ги праща през пощенска кутия на клуба
+  mail: {
+    provider: env.MAIL_PROVIDER || 'demo',
+    host: env.SMTP_HOST, port: Number(env.SMTP_PORT || 465), user: env.SMTP_USER, pass: env.SMTP_PASS,
+    from: env.MAIL_FROM || '',
+  },
   syncMinutes: Number(env.SYNC_MINUTES || 5),
 };
 // качените снимки стоят до базата; готовото приложение (уеб вариантът) се взима от app/dist
@@ -46,7 +51,11 @@ if (!demo) {
   if (config.adminPassword.length < 12) problems.push('ADMIN_PASSWORD трябва да е поне 12 знака');
   if (config.kasaPin.length < 6) problems.push('KASA_PIN трябва да е поне 6 знака');
   if (config.adminPassword === config.kasaPin) problems.push('ADMIN_PASSWORD и KASA_PIN трябва да са различни');
-  if (config.smsProvider === 'demo') problems.push('SMS_PROVIDER=demo не праща истински кодове; изберете доставчик или пуснете с DEMO=1');
+  if (config.mail.provider !== 'smtp') problems.push('MAIL_PROVIDER трябва да е smtp: с demo кодовете за вход не се пращат (или пуснете с DEMO=1)');
+  else {
+    for (const [k, name] of [['host', 'SMTP_HOST'], ['user', 'SMTP_USER'], ['pass', 'SMTP_PASS'], ['from', 'MAIL_FROM']]) if (!config.mail[k]) problems.push(`${name} липсва (пощенската кутия, от която тръгват кодовете за вход)`);
+    if (!Number.isInteger(config.mail.port) || config.mail.port < 1) problems.push('SMTP_PORT трябва да е число, обикновено 465 или 587');
+  }
   if (!Number.isInteger(config.pointsPerEuro) || config.pointsPerEuro < 1) problems.push('POINTS_PER_EURO трябва да е цяло число над нула');
   for (const k of ['welcomePoints', 'birthdayPoints']) if (!Number.isInteger(config[k]) || config[k] < 0) problems.push(`${k === 'welcomePoints' ? 'WELCOME_POINTS' : 'BIRTHDAY_POINTS'} трябва да е цяло число, 0 или повече`);
   if (!/^2\d$/.test(config.cardPrefix)) problems.push('CARD_PREFIX трябва да е от 20 до 29 (вътрешни баркодове)');
@@ -60,9 +69,9 @@ const db = openDb(config.dbPath);
 if (demo && seedDemo(db)) console.log('Демо: добавих примерни промоции, награди и новини.');
 if (demo && seedDemoMissions(db)) console.log('Демо: добавих примерни мисии.');
 if (seedStores(db)) console.log('Добавих списъка с магазините; поддържа се от управлението.');
-const sms = createSms({ provider: config.smsProvider });
+const mail = createMail(config.mail);
 const kasa = createKasa(config);
-const app = await buildApp({ db, config, sms, kasa });
+const app = await buildApp({ db, config, mail, kasa });
 
 // Ако касата може да дава продажбите си, теглим ги на всеки няколко минути.
 async function sync() {
@@ -71,7 +80,7 @@ async function sync() {
     const started = nowIso();
     const sales = await kasa.fetchSales(since);
     let added = 0;
-    for (const s of sales) if (recordPurchase(db, { ...s, source: kasa.name }, { pointsPerEuro: config.pointsPerEuro, scratch: config.scratch }).duplicate === false) added++;
+    for (const s of sales) if (recordPurchase(db, { ...s, source: kasa.name }, { pointsPerEuro: config.pointsPerEuro, scratch: config.scratch, welcomePoints: config.welcomePoints }).duplicate === false) added++;
     setSetting(db, 'sales_cursor', started);
     if (added) console.log(`Каса ${kasa.name}: ${added} нови покупки.`);
   } catch (err) {
@@ -84,7 +93,7 @@ if (kasa.fetchSales) {
 }
 
 await app.listen({ port: config.port, host: config.host });
-console.log(`Клубът слуша на http://${config.host}:${config.port}${demo ? ' (демо: кодовете за вход не се пращат, а се връщат в отговора)' : ''}; каса: ${kasa.name}`);
+console.log(`Клубът слуша на http://${config.host}:${config.port}${demo ? ' (демо: писма с код за вход не се пращат, кодът се връща в отговора)' : ''}; каса: ${kasa.name}`);
 if (config.host === '0.0.0.0') {
   // адресите, на които сървърът се вижда от телефон в същата мрежа
   const addresses = Object.values(networkInterfaces()).flat().filter((n) => n && n.family === 'IPv4' && !n.internal).map((n) => `http://${n.address}:${config.port}`);

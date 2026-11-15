@@ -100,7 +100,7 @@ function renderCustomer(message = '') {
     el('div', { class: 'card paper' },
       el('div', { class: 'row' },
         el('div', {}, el('p', { class: 'eyebrow' }, 'Клиент'), el('h2', {}, c.customer.name || 'Без име'),
-          el('p', { class: 'muted' }, `Код ${c.customer.cardCode} · телефон, завършващ на ${c.customer.phoneTail}`)),
+          el('p', { class: 'muted' }, `Код ${c.customer.cardCode} · имейл ${c.customer.emailHint}`)),
         el('div', { class: 'fit', style: 'text-align:right' }, el('p', { class: 'big' }, String(c.points)), el('p', { class: 'muted' }, 'точки'))),
       message ? el('p', { class: 'ok', role: 'status' }, message) : null),
 
@@ -415,7 +415,7 @@ async function loadCustomers() {
   $('stats').replaceChildren(tile('Клиенти', String(stats.customers)), tile('Покупки', String(stats.purchases)),
     tile('Оборот през клуба', euro(stats.turnoverCents)), tile('Неизползвани точки', String(stats.pointsOutstanding)), tile('Награди за издаване', String(stats.pendingRewards)));
   $('customerRows').replaceChildren(...list.customers.map((c) => el('tr', {},
-    el('td', {}, c.name || 'Без име'), el('td', {}, c.phone), el('td', {}, c.card_code),
+    el('td', {}, c.name || 'Без име'), el('td', {}, c.email), el('td', {}, c.card_code),
     el('td', { class: 'num' }, String(c.points)), el('td', { class: 'num' }, String(c.purchases)), el('td', { class: 'num' }, euro(c.spent_cents)))));
   if (!list.customers.length) $('customerRows').replaceChildren(el('tr', {}, el('td', { colspan: '6', class: 'muted' }, 'Няма клиенти.')));
 }

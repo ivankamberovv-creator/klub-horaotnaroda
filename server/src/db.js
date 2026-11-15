@@ -5,10 +5,10 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS customers (
+// Клиентът влиза с имейл (малки букви) и еднократен код, пратен на него.
+const customersTable = (name) => `CREATE TABLE IF NOT EXISTS ${name} (
   id INTEGER PRIMARY KEY,
-  phone TEXT NOT NULL UNIQUE,
+  email TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL DEFAULT '',
   card_code TEXT NOT NULL UNIQUE,      -- кодът, който касата сканира (EAN-13)
   kasa_id TEXT,                        -- номерът на клиента в касовата програма, когато бъде вързана
@@ -17,20 +17,23 @@ CREATE TABLE IF NOT EXISTS customers (
   favorite_store_id INTEGER,
   news_seen_at TEXT,                   -- докога клиентът е прочел новините
   created_at TEXT NOT NULL
-);
+);`;
+
+const SCHEMA = `
+${customersTable('customers')}
 CREATE TABLE IF NOT EXISTS otp_codes (
-  phone TEXT PRIMARY KEY,
+  email TEXT PRIMARY KEY,
   code_hash TEXT NOT NULL,
   expires_at TEXT NOT NULL,
   attempts INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS otp_requests (
   id INTEGER PRIMARY KEY,
-  phone TEXT NOT NULL,
+  email TEXT NOT NULL,
   ip TEXT,
   at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS otp_requests_phone ON otp_requests(phone, at);
+CREATE INDEX IF NOT EXISTS otp_requests_email ON otp_requests(email, at);
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY,
   role TEXT NOT NULL CHECK (role IN ('customer','kasa','admin')),
@@ -191,15 +194,47 @@ function addTransactions(db) {
   };
 }
 
+const has = (db, table, column) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+
+/**
+ * Преди създаването на таблиците: в старите бази кодовете за вход бяха по телефон.
+ * Те живеят 10 минути, затова двете таблици просто се правят наново, вече по имейл.
+ */
+function upgradeBefore(db) {
+  if (has(db, 'otp_codes', 'phone')) db.exec('DROP TABLE otp_codes; DROP TABLE IF EXISTS otp_requests;');
+}
+
+/**
+ * Стара база, в която клиентът беше с телефон: таблицата се прави наново с имейл.
+ * Номерата на клиентите, кодовете на картите и точките остават. Понеже имейл няма откъде да дойде,
+ * старият запис получава адрес, на който не може да се прати писмо („tel359…@bez-imeil.invalid“):
+ * с него не се влиза, но историята му не се губи.
+ */
+function customersToEmail(db) {
+  // външните ключове се спират, за да не се изтрият покупките и точките заедно със старата таблица
+  db.exec('PRAGMA foreign_keys = OFF');
+  try {
+    db.transaction(() => {
+      db.exec(`${customersTable('customers_new')}
+        INSERT INTO customers_new (id, email, name, card_code, kasa_id, birthday, birthday_set_at, favorite_store_id, news_seen_at, created_at)
+          SELECT id, 'tel' || replace(phone, '+', '') || '@bez-imeil.invalid', name, card_code, kasa_id, birthday, birthday_set_at, favorite_store_id, news_seen_at, created_at FROM customers;
+        DROP TABLE customers;
+        ALTER TABLE customers_new RENAME TO customers;`);
+    })();
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
 /** Довежда по-стара база до сегашния вид: добавя липсващите колони, без да пипа данните. */
 function upgrade(db) {
-  const has = (table, column) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
-  const add = (table, column, type) => { if (!has(table, column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`); };
+  const add = (table, column, type) => { if (!has(db, table, column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`); };
   add('customers', 'birthday', 'TEXT');
   add('customers', 'birthday_set_at', 'TEXT');
   add('customers', 'favorite_store_id', 'INTEGER');
   add('customers', 'news_seen_at', 'TEXT');
   add('promotions', 'image_url', "TEXT NOT NULL DEFAULT ''");
+  if (!has(db, 'customers', 'email')) customersToEmail(db);
   // в първата версия книгата с точките не допускаше причина „bonus“; правилото се сменя само с нова таблица
   const ledger = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'points_ledger'").get().sql;
   if (!ledger.includes("'bonus'")) {
@@ -227,6 +262,7 @@ export function openDb(path = ':memory:') {
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
   addTransactions(db);
+  upgradeBefore(db);
   db.exec(SCHEMA);
   upgrade(db);
   return db;

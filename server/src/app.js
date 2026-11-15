@@ -15,7 +15,7 @@ const id = (v) => {
   return n;
 };
 
-export async function buildApp({ db, config, sms, kasa }) {
+export async function buildApp({ db, config, mail, kasa }) {
   const app = Fastify({ logger: config.log ?? false, trustProxy: config.trustProxy ?? false, bodyLimit: 64 * 1024 });
   // CORS трябва само когато приложението се пуска в браузър; на телефона не се ползва
   if (config.corsOrigin) {
@@ -57,7 +57,7 @@ export async function buildApp({ db, config, sms, kasa }) {
     if (!s || !roles.includes(s.role)) throw new AppError('unauthorized', 'Влезте отново.', 401);
     req.role = s.role;
   };
-  const opts = { pointsPerEuro: config.pointsPerEuro, scratch: config.scratch ?? null };
+  const opts = { pointsPerEuro: config.pointsPerEuro, scratch: config.scratch ?? null, welcomePoints: config.welcomePoints ?? 0 };
   /** Профилът на клиента; пътьом дава точките за рожден ден, ако днес му е денят */
   const me = (customerId) => {
     core.grantBirthdayBonus(db, customerId, config.birthdayPoints ?? 0);
@@ -68,13 +68,19 @@ export async function buildApp({ db, config, sms, kasa }) {
 
   // ---- вход на клиента ----
   app.post('/api/auth/request-code', async (req) => {
-    const { phone, code } = core.requestCode(db, req.body?.phone, req.ip);
-    await sms.send(phone, `Вашият код за клуб „Хора от Народа“ е ${code}. Важи 10 минути.`);
-    // в демото няма истински SMS, затова кодът се връща, за да може да се влезе
+    const { email, code } = core.requestCode(db, req.body?.email, req.ip);
+    try {
+      await mail.send(email, `Код за вход: ${code}`,
+        `Здравейте,\n\nВашият код за вход в клуб „Хора от Народа“ е ${code}.\nВажи 10 минути.\n\nАко не сте поискали код, не правете нищо: без него никой не може да влезе.\n`);
+    } catch (err) {
+      console.error('Писмото с кода не тръгна:', err.message);
+      throw new AppError('mail_failed', 'Не успяхме да пратим писмото. Опитайте пак след малко.', 502);
+    }
+    // в демото писма не се пращат, затова кодът се връща, за да може да се влезе
     return config.demo ? { sent: true, demoCode: code } : { sent: true };
   });
   app.post('/api/auth/verify', async (req) => {
-    const { token, customer, isNew } = core.verifyCode(db, req.body?.phone, req.body?.code, { cardPrefix: config.cardPrefix, welcomePoints: config.welcomePoints ?? 0 });
+    const { token, customer, isNew } = core.verifyCode(db, req.body?.email, req.body?.code, { cardPrefix: config.cardPrefix });
     return { token, isNew, me: core.customerSummary(db, customer.id, opts) };
   });
   app.post('/api/auth/logout', { preHandler: customerOnly }, async (req) => {

@@ -10,14 +10,14 @@ const base = { demo: true, adminPassword: 'admin-parola-123', kasaPin: '654321',
 
 async function setup(extra = {}) {
   const db = openDb(':memory:');
-  const app = await buildApp({ db, config: { ...base, ...extra }, sms: { send: async () => {} }, kasa: createDemoKasa() });
+  const app = await buildApp({ db, config: { ...base, ...extra }, mail: { send: async () => {} }, kasa: createDemoKasa() });
   const call = async (method, url, body, token) => {
     const res = await app.inject({ method, url, payload: body, headers: token ? { authorization: `Bearer ${token}` } : {} });
     return { status: res.statusCode, body: res.body ? JSON.parse(res.body) : null };
   };
-  const login = async (phone = '0888123456') => {
-    const r = await call('POST', '/api/auth/request-code', { phone });
-    return (await call('POST', '/api/auth/verify', { phone, code: r.body.demoCode })).body;
+  const login = async (email = 'maria@primer.bg') => {
+    const r = await call('POST', '/api/auth/request-code', { email });
+    return (await call('POST', '/api/auth/verify', { email, code: r.body.demoCode })).body;
   };
   const staff = async (password) => (await call('POST', '/api/staff/login', { password })).body.token;
   return { db, app, call, login, staff };
@@ -39,7 +39,7 @@ test('наградите за талоните: четене на настрой
 
 test('талон: идва след покупка над минимума, печели веднъж и наградата не се вижда предварително', async () => {
   const t = await setup({ scratch: { minCents: 500, prizes: core.parsePrizes('10:1') } });
-  const me = await t.login(), other = await t.login('0899000111');
+  const me = await t.login(), other = await t.login('drug@primer.bg');
   const kasa = await t.staff('654321');
   const buy = (totalCents) => t.call('POST', '/api/kasa/demo-purchase', { cardCode: me.me.cardCode, totalCents }, kasa);
 
@@ -111,7 +111,7 @@ test('мисии: напредъкът расте с покупките и на�
   assert.equal((await t.call('GET', '/api/home', null, me.token)).body.challenges.length, 2);
 
   // друг клиент започва от нула
-  const other = await t.login('0899000111');
+  const other = await t.login('drug@primer.bg');
   assert.deepEqual((await t.call('GET', '/api/challenges', null, other.token)).body.challenges.map((c) => c.progress), [0, 0]);
 });
 

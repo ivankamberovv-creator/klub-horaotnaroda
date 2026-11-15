@@ -59,6 +59,13 @@ export function Home({ me, home, refreshing, onRefresh, onShowCard, onGo }: Prop
         <Button testID="showCard" title="Покажете картата на касата" kind="light" onPress={onShowCard} />
       </View>
 
+      {me.welcomePoints > 0 ? (
+        <View testID="welcomeGift" style={st.gift}>
+          <Icon name="star" size={22} color={colors.greenDeep} filled />
+          <Text style={st.giftText}>Подарък за добре дошли: +{me.welcomePoints} {pointsWord(me.welcomePoints)} с първата Ви покупка.</Text>
+        </View>
+      ) : null}
+
       {me.scratchCards > 0 ? (
         <Pressable testID="toScratch" accessibilityRole="button" onPress={() => onGo('scratch')} style={st.scratch}>
           <Icon name="star" size={30} color={colors.white} filled />
@@ -151,6 +158,8 @@ const st = StyleSheet.create({
   track: { height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.22)', overflow: 'hidden' },
   fill: { height: 8, backgroundColor: colors.white },
   heroHint: { fontFamily: fonts.body, fontSize: 14, color: '#e6faf1' },
+  gift: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: radius, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper },
+  giftText: { flex: 1, fontFamily: fonts.semi, fontSize: 15, lineHeight: 21, color: colors.ink },
   scratch: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderRadius: radius, backgroundColor: colors.redText, minHeight: 64 },
   scratchTitle: { fontFamily: fonts.bold, fontSize: 17, color: colors.white },
   scratchSub: { fontFamily: fonts.body, fontSize: 14, color: '#ffe3de' },
