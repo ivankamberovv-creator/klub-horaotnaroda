@@ -70,14 +70,15 @@ export function ScratchSurface({ prize, onDone }: { prize: number; onDone: () =>
               ))}
             </View>
             {cleared.every((x) => !x) ? (
-              <View pointerEvents="none" style={[StyleSheet.absoluteFill, st.hint]}><Text style={st.hintText}>Трийте тук с пръст</Text></View>
+              <View pointerEvents="none" style={[StyleSheet.absoluteFill, st.hint]}><Text style={st.hintText}>Трийте тук с пръст</Text><Text style={st.hintSub}>или натиснете бутона отдолу</Text></View>
             ) : null}
             <View testID="scratchArea" {...responder.panHandlers} accessibilityLabel="Трийте тук, за да откриете наградата"
               style={[StyleSheet.absoluteFill, st.touch]} />
           </>
         ) : null}
       </View>
-      {!open ? <Button testID="scratchOpen" title="Открийте наведнъж" kind="ghost" onPress={finish} /> : null}
+      {/* за който не му се трие: наградата се открива с едно докосване */}
+      {!open ? <Button testID="scratchOpen" title="Изтрийте веднага" onPress={finish} /> : null}
     </View>
   );
 }
@@ -88,8 +89,9 @@ const st = StyleSheet.create({
   prizeLabel: { fontFamily: fonts.old, fontSize: 16, letterSpacing: 2.4, textTransform: 'uppercase', color: colors.redText },
   prizeNumber: { fontFamily: fonts.old, fontSize: 76, lineHeight: 80, color: colors.greenDeep },
   prizeUnit: { fontFamily: fonts.semi, fontSize: 16, color: colors.ink },
-  hint: { alignItems: 'center', justifyContent: 'center' },
+  hint: { alignItems: 'center', justifyContent: 'center', gap: 4 },
   hintText: { fontFamily: fonts.bold, fontSize: 18, color: '#3d4a43' },
+  hintSub: { fontFamily: fonts.body, fontSize: 14, color: '#3d4a43' },
   // на телефон в браузър страницата не трябва да се мести, докато се трие
   touch: { cursor: 'pointer', touchAction: 'none', userSelect: 'none' } as object,
 });

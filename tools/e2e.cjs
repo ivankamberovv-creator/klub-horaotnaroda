@@ -89,6 +89,7 @@ const t = (name, cond, info = '') => { cond ? ok++ : fail++; console.log((cond ?
   await shot('07-talon-chaka');
   await p.click(id('scratchStart')); await p.waitForSelector(id('scratchArea'));
   await noOverflow('талон');
+  t('талон: има бутон „Изтрийте веднага“ за който не му се трие', (await txt('scratchOpen')) === 'Изтрийте веднага');
   // истинско триене: мишката минава на редове по талона, докато се открие
   const area = await (await p.$(id('scratchArea'))).boundingBox();
   await p.mouse.move(area.x + 8, area.y + 8); await p.mouse.down();
