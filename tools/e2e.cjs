@@ -1,5 +1,5 @@
 // Целият поток: приложението (в браузър с размер на телефон) + страницата за служители, срещу демо сървъра.
-// Пуска се върху чиста демо база; вижте README.md, „Проверка от край до край“.
+// Пуска се върху чиста демо база и с WEATHER=rain (за да е времето едно и също); вижте README.md, „Проверка от край до край“.
 //   node tools/e2e.cjs <папка за снимките> <снимка за качване (jpg)>
 const { chromium } = require(process.env.PLAYWRIGHT || 'playwright');
 const SRV = process.env.KLUB_URL || 'http://localhost:4100', OUT = process.argv[2], PHOTO = process.argv[3];
@@ -42,7 +42,12 @@ const t = (name, cond, info = '') => { cond ? ok++ : fail++; console.log((cond ?
   await p.waitForSelector('[data-testid^="offerTile-"]');
   t('вход: нов клиент с 0 точки и обещан подарък при първата покупка', await becomes('points', 0) && (await txt('welcomeGift')).includes('+20 точки с първата Ви покупка'), await txt('points'));
   t('началото поздравява по име', (await body()).includes('Здравейте, Мария Петрова'));
-  t('началото показва офертите и новините', (await p.$$('[data-testid^="offerTile-"]')).length === 4 && (await body()).includes('Добре дошли в клуба'));
+  t('началото показва офертите (четири обикновени и една заради дъжда) и новините', (await p.$$('[data-testid^="offerTile-"]')).length === 5 && (await body()).includes('Добре дошли в клуба'));
+  const band = await txt('weather');
+  t('началото показва времето: дъжд, градуси и град, с бележка, че е примерно', band.includes('9° Вали дъжд') && band.includes('София') && band.includes('примерно време'), band);
+  t('под времето стои офертата заради дъжда', (await txt('weatherOffer')).includes('Оферта заради времето') && (await txt('weatherOffer')).includes('Вали дъжд: двойни точки'));
+  t('без любим магазин времето е за София и се предлага да си изберете магазин', (await txt('weatherPick')).includes('Изберете Вашия магазин'));
+  await shot('02a-vreme');
   t('началото показва две мисии с напредък 0', (await p.$$('[data-testid^="challenge-"]')).length === 2 && (await body()).includes('0 от 3 покупки'));
   await noOverflow('начало');
   await shot('02-nachalo');
@@ -56,7 +61,13 @@ const t = (name, cond, info = '') => { cond ? ok++ : fail++; console.log((cond ?
 
   // ---- оферти ----
   await tab('offers');
-  t('оферти: 4 общо, 0 активирани', (await txt('filterAll')) === 'Всички (4)' && (await txt('filterMine')) === 'Активирани (0)');
+  t('оферти: 5 общо (с тази заради дъжда), 0 активирани', (await txt('filterAll')) === 'Всички (5)' && (await txt('filterMine')) === 'Активирани (0)');
+  // офертата според времето: има небе отгоре, активира се и важи до края на деня; после я отказваме, за да не пречи на сметките надолу
+  const rainId = await p.$eval('[data-testid^="weatherHead-"]', (e) => e.getAttribute('data-testid').split('-')[1]);
+  t('оферти: тази заради дъжда е с небе и предупреждава, че е само докато вали', (await txt('weatherHead-' + rainId)).includes('Вали дъжд') && (await body()).includes('Само докато времето е такова'));
+  await p.click(id('activate-' + rainId)); await p.waitForSelector(id('deactivate-' + rainId));
+  t('оферти: активираната заради дъжда важи до края на деня', (await body()).includes('Важи до края на деня') && (await txt('filterMine')) === 'Активирани (1)');
+  await p.click(id('deactivate-' + rainId)); await p.waitForSelector(id('activate-' + rainId));
   const dbl = await p.evaluateHandle(() => [...document.querySelectorAll('[data-testid^="activate-"]')].find((x) => x.parentElement.parentElement.textContent.includes('Двойни точки')));
   await dbl.asElement().click(); await p.waitForTimeout(500);
   t('оферти: след активиране броячът е 1', (await txt('filterMine')) === 'Активирани (1)');
@@ -160,6 +171,23 @@ const t = (name, cond, info = '') => { cond ? ok++ : fail++; console.log((cond ?
   t('магазини: има работно време, обаждане и упътване', (await body()).includes('Обадете се') && (await body()).includes('Упътване') && /\d{1,2}:\d{2}–\d{1,2}:\d{2}|Денонощно/.test(await body()));
   await shot('14-magazini');
   await noOverflow('магазини');
+
+  // ---- най-близкият магазин ----
+  await p.click(id('nearest')); await p.waitForTimeout(1500);
+  t('най-близък: без разрешение има ясно съобщение и списъкът си стои', (await body()).includes('Не получихме достъп до местоположението Ви') && (await p.$(id('nearestBadge'))) === null, (await body()).slice(0, 200));
+  await phone.grantPermissions(['geolocation']); await phone.setGeolocation({ latitude: 42.1354, longitude: 24.7453 }); // центърът на Пловдив
+  await p.click(id('nearest')); await p.waitForSelector(id('nearestBadge'));
+  const near = await p.$$eval('[data-testid^="store-"]', (els) => els.map((e) => e.textContent));
+  t('най-близък: търсенето се изчиства и най-отгоре е магазин в Пловдив', near.length === 18 && near[0].includes('Най-близо до Вас') && near[0].includes('Пловдив') && /На (\d+ м|\d,\d км) от Вас/.test(near[0]), near[0].slice(0, 90));
+  const kms = await p.$$eval('[data-testid^="distance-"]', (els) => els.map((e) => e.textContent));
+  t('най-близък: всеки магазин с координати показва разстояние, а този без координати е последен', kms.length === 17 && !near[17].includes('от Вас') && near.filter((x) => x.includes('Най-близо до Вас')).length === 1, String(kms.length));
+  t('най-близък: София е по-далеч от Пловдив, отколкото Пловдив от себе си', near.findIndex((x) => x.includes('София')) > near.findIndex((x) => x.includes('Пловдив')));
+  t('най-близък: бутонът вече предлага обновяване и грешката е изчистена', (await txt('nearest')) === 'Обновете местоположението' && !(await body()).includes('Не получихме достъп'));
+  await shot('14a-nai-blizak');
+  await noOverflow('най-близък магазин');
+  // любимият магазин е във Варна: началото вече показва времето там и не подканя за избор
+  await tab('home'); await p.waitForSelector(id('weather'));
+  t('началото: с любим магазин времето е за неговия град', (await txt('weather')).includes('Варна') && (await p.$(id('weatherPick'))) === null, await txt('weather'));
 
   // ---- управление: новина и оферта със снимка, мисии, магазини ----
   await k.click('#logout'); await k.fill('#password', 'demo-admin'); await k.click('#loginForm button'); await k.waitForSelector('#cardCode');

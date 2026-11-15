@@ -15,7 +15,7 @@ const id = (v) => {
   return n;
 };
 
-export async function buildApp({ db, config, mail, kasa }) {
+export async function buildApp({ db, config, mail, kasa, weather = { at: async () => null } }) {
   const app = Fastify({ logger: config.log ?? false, trustProxy: config.trustProxy ?? false, bodyLimit: 64 * 1024 });
   // CORS трябва само когато приложението се пуска в браузър; на телефона не се ползва
   if (config.corsOrigin) {
@@ -88,11 +88,19 @@ export async function buildApp({ db, config, mail, kasa }) {
     return { ok: true };
   });
 
+  // времето при клиента: около любимия му магазин, иначе в града с най-много магазини
+  const weatherFor = async (customerId) => {
+    const place = core.weatherPlace(db, customerId);
+    const now = place ? await weather.at(place.lat, place.lng) : null;
+    return now ? { ...now, city: place.city, own: place.own } : null;
+  };
+  const weatherKind = async (customerId) => (await weatherFor(customerId))?.kind ?? null;
+
   // ---- приложението ----
   app.get('/api/me', { preHandler: customerOnly }, async (req) => me(req.customerId));
   app.get('/api/home', { preHandler: customerOnly }, async (req) => {
     core.grantBirthdayBonus(db, req.customerId, config.birthdayPoints ?? 0);
-    return core.home(db, req.customerId, opts);
+    return core.home(db, req.customerId, { ...opts, weather: await weatherFor(req.customerId) });
   });
   app.put('/api/me', { preHandler: customerOnly }, async (req) => {
     // сменя се само това, което е пратено: име, рожден ден (само веднъж) или любим магазин
@@ -107,14 +115,15 @@ export async function buildApp({ db, config, mail, kasa }) {
     return { ok: true };
   });
 
-  app.get('/api/promotions', { preHandler: customerOnly }, async (req) => ({ promotions: core.listPromotions(db, req.customerId) }));
+  app.get('/api/promotions', { preHandler: customerOnly }, async (req) => ({ promotions: core.listPromotions(db, req.customerId, { weather: await weatherKind(req.customerId) }) }));
   app.post('/api/promotions/:id/activate', { preHandler: customerOnly }, async (req) => {
-    core.activatePromotion(db, req.customerId, id(req.params.id));
-    return { promotions: core.listPromotions(db, req.customerId) };
+    const kind = await weatherKind(req.customerId);
+    core.activatePromotion(db, req.customerId, id(req.params.id), { weather: kind });
+    return { promotions: core.listPromotions(db, req.customerId, { weather: kind }) };
   });
   app.delete('/api/promotions/:id/activate', { preHandler: customerOnly }, async (req) => {
     core.deactivatePromotion(db, req.customerId, id(req.params.id));
-    return { promotions: core.listPromotions(db, req.customerId) };
+    return { promotions: core.listPromotions(db, req.customerId, { weather: await weatherKind(req.customerId) }) };
   });
 
   app.get('/api/rewards', { preHandler: customerOnly }, async (req) => ({

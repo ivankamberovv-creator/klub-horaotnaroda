@@ -5,8 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
 import { buildApp } from './app.js';
 import { createMail } from './mail.js';
+import { createWeather, WEATHER_KINDS } from './weather.js';
 import { createKasa } from './connectors/index.js';
-import { seedDemo, seedDemoMissions, seedStores } from './seed.js';
+import { seedDemo, seedDemoMissions, seedDemoWeather, seedStores } from './seed.js';
 import { recordPurchase, getSetting, setSetting, nowIso, parsePrizes } from './core.js';
 
 const env = process.env;
@@ -33,6 +34,8 @@ const config = {
   trustProxy: env.TRUST_PROXY === '1',
   kasa: env.KASA || 'demo',
   yanak: { baseUrl: env.YANAK_URL || undefined, email: env.YANAK_EMAIL, username: env.YANAK_USERNAME },
+  // времето навън: off, live (MET Norway; иска WEATHER_CONTACT), demo (сменя се през две минути) или sun, clouds, rain, fog, snow
+  weather: { mode: env.WEATHER || (demo ? 'demo' : 'off'), contact: env.WEATHER_CONTACT || '' },
   // писмата с кода за вход: demo само ги печата, smtp ги праща през пощенска кутия на клуба
   mail: {
     provider: env.MAIL_PROVIDER || 'demo',
@@ -65,13 +68,25 @@ if (!demo) {
   }
 }
 
+// времето се проверява и в демото: грешна стойност трябва да се види веднага, а не като липсваща лента в приложението
+if (!['off', 'live', 'demo', ...WEATHER_KINDS].includes(config.weather.mode)) {
+  console.error(`Сървърът не тръгва:\n- WEATHER трябва да е off, live, demo или ${WEATHER_KINDS.join(', ')}`);
+  process.exit(1);
+}
+if (config.weather.mode === 'live' && !config.weather.contact) {
+  console.error('Сървърът не тръгва:\n- WEATHER=live иска WEATHER_CONTACT: имейл или сайт за връзка, който MET Norway изисква при всяко питане');
+  process.exit(1);
+}
+
 const db = openDb(config.dbPath);
 if (demo && seedDemo(db)) console.log('Демо: добавих примерни промоции, награди и новини.');
 if (demo && seedDemoMissions(db)) console.log('Демо: добавих примерни мисии.');
+if (demo && seedDemoWeather(db)) console.log('Демо: добавих примерни оферти според времето.');
 if (seedStores(db)) console.log('Добавих списъка с магазините; поддържа се от управлението.');
 const mail = createMail(config.mail);
+const weather = createWeather(config.weather);
 const kasa = createKasa(config);
-const app = await buildApp({ db, config, mail, kasa });
+const app = await buildApp({ db, config, mail, kasa, weather });
 
 // Ако касата може да дава продажбите си, теглим ги на всеки няколко минути.
 async function sync() {

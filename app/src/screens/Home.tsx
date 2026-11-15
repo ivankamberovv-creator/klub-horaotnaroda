@@ -6,6 +6,8 @@ import { Icon, IconName } from '../components/Icon';
 import { InstallHint } from '../components/InstallHint';
 import { CountUp } from '../components/CountUp';
 import { Challenges } from '../components/Challenges';
+import { WeatherScene } from '../components/WeatherScene';
+import { skyColor, Weather, weatherLabel } from '../weather';
 import { colors, day, dayTime, euro, fonts, pointsWord, radius } from '../theme';
 
 type Target = 'offers' | 'rewards' | 'purchases' | 'news' | 'stores' | 'history' | 'scratch' | 'missions';
@@ -17,7 +19,9 @@ function OfferTile({ offer, onPress }: { offer: Promotion; onPress: () => void }
       style={[st.tile, offer.activated && { borderColor: colors.greenFlag }]}>
       {offer.image_url
         ? <Image source={{ uri: mediaUrl(offer.image_url) }} style={st.tileImage} resizeMode="cover" accessibilityIgnoresInvertColors />
-        : <View style={[st.tileImage, st.tileBlank]}><Icon name="tag" size={30} color={colors.white} /></View>}
+        : offer.weather
+          ? <WeatherScene kind={offer.weather} width={190} height={104} still />
+          : <View style={[st.tileImage, st.tileBlank]}><Icon name="tag" size={30} color={colors.white} /></View>}
       <View style={{ padding: 12, gap: 4, flex: 1 }}>
         {offer.tag ? <Text numberOfLines={1} style={st.tileTag}>{offer.tag}</Text> : null}
         <Text numberOfLines={2} style={st.tileTitle}>{offer.title}</Text>
@@ -36,6 +40,38 @@ function Shortcut({ icon, label, onPress, testID }: { icon: IconName; label: str
   );
 }
 
+/** Лентата с времето навън; под нея, ако има, офертата, която върви с това време */
+function WeatherBand({ weather, offer, onGo }: { weather: Weather; offer: Promotion | null; onGo: (to: Target) => void }) {
+  const label = weatherLabel[weather.kind];
+  const degrees = weather.temp === null ? '' : `${weather.temp}°`;
+  return (
+    <View style={st.weather}>
+      <View testID="weather" accessible accessibilityLabel={`Времето в ${weather.city}: ${label}${weather.temp === null ? '' : `, ${weather.temp} градуса`}`}
+        style={[st.weatherTop, { backgroundColor: skyColor(weather.kind, weather.isDay) }]}>
+        <View style={{ flex: 1, paddingLeft: 16, paddingVertical: 12, gap: 2, justifyContent: 'center' }}>
+          <Text style={st.weatherNow}>{degrees ? `${degrees} ` : ''}{label}</Text>
+          <Text style={st.weatherPlace}>{weather.city}{weather.sample ? ' · примерно време' : ''}</Text>
+        </View>
+        <WeatherScene kind={weather.kind} isDay={weather.isDay} width={136} height={84} />
+      </View>
+      {offer ? (
+        <Pressable testID="weatherOffer" accessibilityRole="button" onPress={() => onGo('offers')} style={st.weatherOffer}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={st.tileTag}>{offer.activated ? 'Активирана · важи до края на деня' : 'Оферта заради времето'}</Text>
+            <Text style={st.rowTitle}>{offer.title}</Text>
+          </View>
+          <Icon name="chevron" size={20} color={colors.greenDeep} />
+        </Pressable>
+      ) : null}
+      {!weather.own ? (
+        <Pressable testID="weatherPick" accessibilityRole="button" onPress={() => onGo('stores')} style={st.weatherPick}>
+          <Text style={st.weatherPickText}>Това е времето в {weather.city}. <Text style={{ textDecorationLine: 'underline' }}>Изберете Вашия магазин</Text></Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 export function Home({ me, home, refreshing, onRefresh, onShowCard, onGo }: Props) {
   const next = me.nextReward;
   const progress = next ? Math.max(0.04, Math.min(1, me.points / next.costPoints)) : 1;
@@ -43,6 +79,8 @@ export function Home({ me, home, refreshing, onRefresh, onShowCard, onGo }: Prop
   return (
     <ScrollView contentContainerStyle={s.screen} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.green} />}>
       {me.name ? <P muted>Здравейте, {me.name}!</P> : null}
+
+      {home?.weather ? <WeatherBand weather={home.weather} offer={home.offers.find((o) => o.weather) ?? null} onGo={onGo} /> : null}
 
       <View style={st.hero}>
         <Text style={st.heroLabel}>Вашите точки</Text>
@@ -158,6 +196,13 @@ const st = StyleSheet.create({
   track: { height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.22)', overflow: 'hidden' },
   fill: { height: 8, backgroundColor: colors.white },
   heroHint: { fontFamily: fonts.body, fontSize: 14, color: '#e6faf1' },
+  weather: { borderRadius: radius, borderWidth: 1, borderColor: colors.line, overflow: 'hidden', backgroundColor: colors.white },
+  weatherTop: { flexDirection: 'row', alignItems: 'stretch', minHeight: 84 },
+  weatherNow: { fontFamily: fonts.old, fontSize: 24, lineHeight: 28, color: colors.white },
+  weatherPlace: { fontFamily: fonts.semi, fontSize: 14, color: colors.white },
+  weatherOffer: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 16, minHeight: 56 },
+  weatherPick: { paddingVertical: 10, paddingHorizontal: 16, minHeight: 44, justifyContent: 'center', borderTopWidth: 1, borderTopColor: colors.line },
+  weatherPickText: { fontFamily: fonts.body, fontSize: 14, color: colors.muted },
   gift: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: radius, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper },
   giftText: { flex: 1, fontFamily: fonts.semi, fontSize: 15, lineHeight: 21, color: colors.ink },
   scratch: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderRadius: radius, backgroundColor: colors.redText, minHeight: 64 },

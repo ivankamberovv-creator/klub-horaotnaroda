@@ -1,6 +1,7 @@
 // Връзката със сървъра на клуба. Когато приложението се отваря от сайта на клуба, сървърът е на същия адрес
 // и нищо не се настройва. За телефон или за работа на компютъра адресът идва от EXPO_PUBLIC_API_URL (вижте README.md).
 import { Platform } from 'react-native';
+import type { Weather } from './weather';
 
 const fromEnv = process.env.EXPO_PUBLIC_API_URL;
 export const API_URL = (fromEnv ?? (Platform.OS === 'web' ? '' : 'http://localhost:4100')).replace(/\/$/, '');
@@ -19,6 +20,8 @@ export type Promotion = {
   id: number; title: string; tag: string; description: string;
   kind: 'discount' | 'double_points' | 'bonus_points' | 'info'; value: number; min_total_cents: number;
   ends_at: string | null; activated: boolean; image_url: string;
+  /** празно: важи винаги; иначе се показва само при такова време и активирана важи до края на деня */
+  weather: '' | 'sun' | 'clouds' | 'rain' | 'fog' | 'snow';
 };
 export type DayHours = [string, string] | null | '?';
 export type Store = { id: number; name: string; city: string; address: string; phone: string; hours: DayHours[] | '24/7'; lat: number | null; lng: number | null };
@@ -26,7 +29,7 @@ export type NewsItem = { id: number; title: string; body: string; image_url: str
 export type HistoryItem = { id: number; delta: number; label: string; at: string };
 export type Challenge = { id: number; title: string; description: string; kind: 'purchases' | 'spend'; goal: number; reward_points: number; ends_at: string | null; progress: number; done: boolean };
 export type ScratchCard = { id: number; status: 'new' | 'revealed'; shop: string; created_at: string; revealed_at: string | null; prize: number | null };
-export type HomeData = { me: Me; offers: Promotion[]; lastPurchase: Purchase | null; news: NewsItem[]; challenges: Challenge[] };
+export type HomeData = { me: Me; weather: Weather | null; offers: Promotion[]; lastPurchase: Purchase | null; news: NewsItem[]; challenges: Challenge[] };
 export type Reward = { id: number; title: string; description: string; cost_points: number };
 export type Redemption = { id: number; reward_title: string; points: number; status: 'pending' | 'issued' | 'cancelled'; created_at: string; resolved_at: string | null };
 export type Purchase = { id: number; shop: string; total_cents: number; discount_cents: number; points_earned: number; purchased_at: string };

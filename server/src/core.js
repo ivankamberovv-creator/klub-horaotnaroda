@@ -200,16 +200,31 @@ export const deleteCustomer = (db, customerId) => db.prepare('DELETE FROM custom
 const PROMO_VALID = `p.active = 1 AND (p.starts_at IS NULL OR p.starts_at <= @at) AND (p.ends_at IS NULL OR p.ends_at > @at)`;
 
 /** Текущите промоции, с отметка коя е активирал клиентът */
-export function listPromotions(db, customerId, at = nowIso()) {
+// Оферта „според времето“ (p.weather): показва се и може да се активира само докато навън е такова време,
+// а активирана важи до края на същия ден по българско време. Така точките при покупка не зависят от това
+// какво е било времето в минутата на плащането, а от нещо, което се знае със сигурност: кога е активирана.
+const sofiaDay = (iso) => { const d = todayInSofia(new Date(iso)); return `${d.year}-${d.monthDay}`; };
+const activatedNow = (p, at) => Boolean(p.activated_at) && (!p.weather || sofiaDay(p.activated_at) === sofiaDay(at));
+
+/** Офертите за клиента. weather е видът време при него в момента („rain“…) или null, ако не се знае. */
+export function listPromotions(db, customerId, { at = nowIso(), weather = null } = {}) {
   return db.prepare(`
-    SELECT p.id, p.title, p.tag, p.description, p.kind, p.value, p.min_total_cents, p.ends_at, p.image_url,
-           a.activated_at IS NOT NULL AS activated
+    SELECT p.id, p.title, p.tag, p.description, p.kind, p.value, p.min_total_cents, p.ends_at, p.image_url, p.weather, a.activated_at
     FROM promotions p LEFT JOIN activations a ON a.promotion_id = p.id AND a.customer_id = @customerId
-    WHERE ${PROMO_VALID} ORDER BY p.id DESC`).all({ customerId, at }).map((p) => ({ ...p, activated: Boolean(p.activated) }));
+    WHERE ${PROMO_VALID} ORDER BY p.id DESC`).all({ customerId, at })
+    .map(({ activated_at, ...p }) => ({ ...p, activated: activatedNow({ ...p, activated_at }, at) }))
+    .filter((p) => !p.weather || p.weather === weather || p.activated);
 }
-export function activatePromotion(db, customerId, promotionId, at = nowIso()) {
-  const p = db.prepare(`SELECT p.id FROM promotions p WHERE p.id = @id AND ${PROMO_VALID}`).get({ id: promotionId, at });
+export function activatePromotion(db, customerId, promotionId, { at = nowIso(), weather = null } = {}) {
+  const p = db.prepare(`SELECT p.id, p.weather FROM promotions p WHERE p.id = @id AND ${PROMO_VALID}`).get({ id: promotionId, at });
   if (!p) throw new AppError('no_promotion', 'Тази промоция вече не е активна.', 404);
+  if (p.weather) {
+    const mine = db.prepare('SELECT activated_at FROM activations WHERE customer_id = ? AND promotion_id = ?').get(customerId, promotionId);
+    if (mine && sofiaDay(mine.activated_at) === sofiaDay(at)) return; // вече е активирана днес
+    if (p.weather !== weather) throw new AppError('weather_changed', 'Времето се промени и тази оферта вече не може да се активира.', 409);
+    // активиране от друг ден вече не важи: записва се наново с днешна дата
+    db.prepare('DELETE FROM activations WHERE customer_id = ? AND promotion_id = ?').run(customerId, promotionId);
+  }
   db.prepare('INSERT OR IGNORE INTO activations (customer_id, promotion_id, activated_at) VALUES (?, ?, ?)').run(customerId, promotionId, at);
 }
 export const deactivatePromotion = (db, customerId, promotionId) =>
@@ -218,9 +233,10 @@ export const deactivatePromotion = (db, customerId, promotionId) =>
 /** Промоциите, които клиентът е активирал и които важат в момента `at` */
 export function activePromotions(db, customerId, at = nowIso()) {
   return db.prepare(`
-    SELECT p.id, p.title, p.kind, p.value, p.min_total_cents
+    SELECT p.id, p.title, p.kind, p.value, p.min_total_cents, p.weather, a.activated_at
     FROM promotions p JOIN activations a ON a.promotion_id = p.id AND a.customer_id = @customerId
-    WHERE ${PROMO_VALID} ORDER BY p.id`).all({ customerId, at });
+    WHERE ${PROMO_VALID} ORDER BY p.id`).all({ customerId, at })
+    .filter((p) => activatedNow(p, at)).map(({ activated_at, ...p }) => p);
 }
 
 // ---- награди ----
@@ -488,6 +504,7 @@ const imageUrl = (v) => {
   return url.slice(0, 300);
 };
 const KIND_RANGE = { discount: [1, 90], double_points: [2, 5], bonus_points: [1, 10000], info: [0, 0] };
+const PROMO_WEATHER = ['', 'sun', 'clouds', 'rain', 'fog', 'snow'];
 
 function promotionFields(b) {
   const title = text(b.title, 80);
@@ -502,19 +519,21 @@ function promotionFields(b) {
   if (!Number.isInteger(minTotal) || minTotal < 0) throw new AppError('bad_min_total', 'Минималната сума не е вярна.');
   const starts = isoOrNull(b.starts_at), ends = isoOrNull(b.ends_at);
   if (starts && ends && ends <= starts) throw new AppError('bad_dates', 'Краят трябва да е след началото.');
+  const weather = b.weather ?? '';
+  if (!PROMO_WEATHER.includes(weather)) throw new AppError('bad_weather', 'Изберете при какво време да се показва офертата.');
   return { title, tag: text(b.tag, 40), description: text(b.description, 300), kind: b.kind, value, min_total_cents: minTotal,
-    starts_at: starts, ends_at: ends, active: b.active === false || b.active === 0 ? 0 : 1, image_url: imageUrl(b.image_url) };
+    starts_at: starts, ends_at: ends, active: b.active === false || b.active === 0 ? 0 : 1, image_url: imageUrl(b.image_url), weather };
 }
 export const adminListPromotions = (db) => db.prepare(`SELECT p.*, (SELECT COUNT(*) FROM activations a WHERE a.promotion_id = p.id) activations
   FROM promotions p ORDER BY p.id DESC`).all();
 export function adminSavePromotion(db, body, id = null) {
   const f = promotionFields(body);
   if (id === null) {
-    id = db.prepare(`INSERT INTO promotions (title, tag, description, kind, value, min_total_cents, starts_at, ends_at, active, image_url, created_at)
-      VALUES (@title, @tag, @description, @kind, @value, @min_total_cents, @starts_at, @ends_at, @active, @image_url, @created_at)`).run({ ...f, created_at: nowIso() }).lastInsertRowid;
+    id = db.prepare(`INSERT INTO promotions (title, tag, description, kind, value, min_total_cents, starts_at, ends_at, active, image_url, weather, created_at)
+      VALUES (@title, @tag, @description, @kind, @value, @min_total_cents, @starts_at, @ends_at, @active, @image_url, @weather, @created_at)`).run({ ...f, created_at: nowIso() }).lastInsertRowid;
   } else {
     const done = db.prepare(`UPDATE promotions SET title=@title, tag=@tag, description=@description, kind=@kind, value=@value,
-      min_total_cents=@min_total_cents, starts_at=@starts_at, ends_at=@ends_at, active=@active, image_url=@image_url WHERE id=@id`).run({ ...f, id });
+      min_total_cents=@min_total_cents, starts_at=@starts_at, ends_at=@ends_at, active=@active, image_url=@image_url, weather=@weather WHERE id=@id`).run({ ...f, id });
     if (!done.changes) throw new AppError('no_promotion', 'Няма такава промоция.', 404);
   }
   return db.prepare('SELECT * FROM promotions WHERE id = ?').get(id);
@@ -623,10 +642,26 @@ export function adminSaveNews(db, body, id = null) {
 }
 
 /** Началният екран на приложението с една заявка */
+/**
+ * За кое място да се гледа времето: любимият магазин на клиента, а ако няма такъв, градът с най-много магазини.
+ * own казва дали мястото е избрано от клиента. null, ако никой магазин няма координати.
+ */
+export function weatherPlace(db, customerId) {
+  const HAS = 'active = 1 AND lat IS NOT NULL AND lng IS NOT NULL';
+  const own = db.prepare(`SELECT s.city, s.lat, s.lng FROM customers c JOIN stores s ON s.id = c.favorite_store_id
+    WHERE c.id = ? AND s.active = 1 AND s.lat IS NOT NULL AND s.lng IS NOT NULL`).get(customerId);
+  if (own) return { ...own, own: true };
+  const common = db.prepare(`SELECT city, lat, lng FROM stores WHERE ${HAS}
+    AND city = (SELECT city FROM stores WHERE ${HAS} GROUP BY city ORDER BY COUNT(*) DESC, city LIMIT 1) ORDER BY id LIMIT 1`).get();
+  return common ? { ...common, own: false } : null;
+}
+
+/** opts.weather: времето при клиента ({ kind, isDay, temp, city, own }) или null, ако не се знае */
 export function home(db, customerId, opts = {}) {
   return {
     me: customerSummary(db, customerId, opts),
-    offers: listPromotions(db, customerId).slice(0, 8),
+    weather: opts.weather ?? null,
+    offers: listPromotions(db, customerId, { weather: opts.weather?.kind ?? null }).slice(0, 8),
     lastPurchase: listPurchases(db, customerId, 1)[0] ?? null,
     news: listNews(db, 3),
     challenges: listChallenges(db, customerId),

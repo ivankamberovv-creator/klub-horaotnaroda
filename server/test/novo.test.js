@@ -181,6 +181,7 @@ test('по-стара база се довежда до новия вид, бе�
   db.prepare("INSERT INTO points_ledger (customer_id, delta, reason, ref, created_at) VALUES (1, 20, 'bonus', 'welcome', ?)").run(core.nowIso());
   assert.equal(core.balance(db, 1), 360);
   assert.equal(core.listPromotions(db, 1)[0].image_url, '');
+  assert.equal(core.listPromotions(db, 1)[0].weather, ''); // старите оферти важат при всякакво време
   assert.equal(core.customerSummary(db, 1).birthday, null);
   // клиентът беше с телефон: записът, кодът на картата и точките остават, а входът вече е с имейл
   const kept = core.customerSummary(db, 1);

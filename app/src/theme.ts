@@ -14,6 +14,17 @@ export const colors = {
   redText: '#b81f0e',
   white: '#ffffff',
   disabledBg: '#e4ede8',
+  // небето в лентата с времето; бял текст се чете върху всяко от тях (контраст над 4,5)
+  skySun: '#1b74bd',
+  skyClouds: '#5b7486',
+  skyRain: '#3f5b70',
+  skyFog: '#66757d',
+  skySnow: '#44749c',
+  skyNight: '#16324a',
+  sun: '#ffd23f',
+  cloud: '#eef3f6',
+  cloudDark: '#c9d5dc',
+  drop: '#bfe3ff',
 };
 
 export const fonts = {

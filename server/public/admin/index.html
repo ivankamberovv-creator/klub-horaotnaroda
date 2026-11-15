@@ -68,6 +68,17 @@
           <label id="promoMinLabel">Минимална покупка, €<input id="promoMin" type="number" min="0" step="0.01"></label>
         </div>
         <div class="row">
+          <label>Показва се<select id="promoWeather">
+            <option value="">Винаги</option>
+            <option value="sun">Само когато е слънчево</option>
+            <option value="clouds">Само когато е облачно</option>
+            <option value="rain">Само когато вали дъжд</option>
+            <option value="fog">Само когато има мъгла</option>
+            <option value="snow">Само когато вали сняг</option>
+          </select></label>
+          <p class="muted" id="promoWeatherNote" style="align-self:center" hidden>Клиентът я вижда и активира само при такова време около неговия магазин. Активирана важи до края на деня.</p>
+        </div>
+        <div class="row">
           <label>Начало (по желание)<input id="promoStarts" type="datetime-local"></label>
           <label>Край (по желание)<input id="promoEnds" type="datetime-local"></label>
           <label class="fit" style="align-self:center"><span><input id="promoActive" type="checkbox" checked style="width:auto;min-height:0"> Активна</span></label>

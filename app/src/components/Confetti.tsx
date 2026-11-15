@@ -19,12 +19,12 @@ export function Confetti({ run }: { run: number }) {
     AccessibilityInfo.isReduceMotionEnabled().then((reduced) => {
       if (cancelled || reduced) return;
       const w = Math.min(width, 520);
-      setPieces(Array.from({ length: 32 }, () => ({
+      setPieces(Array.from({ length: 128 }, () => ({
         left: Math.random() * (w - 20), size: 12 + Math.random() * 8,
-        delay: Math.random() * 0.25, drift: (Math.random() - 0.5) * 90, turn: (Math.random() - 0.5) * 420,
+        delay: Math.random() * 0.4, drift: (Math.random() - 0.5) * 90, turn: (Math.random() - 0.5) * 420,
       })));
       fall.setValue(0);
-      Animated.timing(fall, { toValue: 1, duration: 1700, easing: Easing.out(Easing.quad), useNativeDriver: false }).start(() => { if (!cancelled) setPieces([]); });
+      Animated.timing(fall, { toValue: 1, duration: 3400, easing: Easing.out(Easing.quad), useNativeDriver: false }).start(() => { if (!cancelled) setPieces([]); });
     });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps

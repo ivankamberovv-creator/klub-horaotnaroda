@@ -192,6 +192,8 @@ function promoFormFor(p) {
   $('promoStarts').value = localInput(p?.starts_at);
   $('promoEnds').value = localInput(p?.ends_at);
   $('promoActive').checked = p ? Boolean(p.active) : true;
+  $('promoWeather').value = p?.weather ?? '';
+  $('promoWeatherNote').hidden = !$('promoWeather').value;
   promoImage.set(p?.image_url ?? '');
   show($('promoErr'), '');
   promoKindChanged();
@@ -203,6 +205,7 @@ function promoKindChanged() {
   $('promoValueLabel').firstChild.textContent = kind === 'discount' ? 'Отстъпка, %' : kind === 'double_points' ? 'Множител (2 = двойни)' : 'Точки отгоре';
 }
 $('promoKind').addEventListener('change', promoKindChanged);
+$('promoWeather').addEventListener('change', () => { $('promoWeatherNote').hidden = !$('promoWeather').value; });
 $('promoReset').addEventListener('click', () => promoFormFor(null));
 $('promoForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -215,6 +218,7 @@ $('promoForm').addEventListener('submit', async (e) => {
     ends_at: $('promoEnds').value ? new Date($('promoEnds').value).toISOString() : null,
     active: $('promoActive').checked,
     image_url: promoImage.url(),
+    weather: $('promoWeather').value,
   };
   try {
     await api(id ? 'PUT' : 'POST', '/api/admin/promotions' + (id ? '/' + id : ''), body);
@@ -222,11 +226,12 @@ $('promoForm').addEventListener('submit', async (e) => {
     loadPromotions();
   } catch (err) { show($('promoErr'), err.message); }
 });
+const WEATHER_WHEN = { sun: 'само когато е слънчево', clouds: 'само когато е облачно', rain: 'само когато вали дъжд', fog: 'само когато има мъгла', snow: 'само когато вали сняг' };
 async function loadPromotions() {
   const { promotions } = await api('GET', '/api/admin/promotions');
   const what = (p) => (p.kind === 'discount' ? `${p.value}%` : p.kind === 'double_points' ? `× ${p.value}` : p.kind === 'bonus_points' ? `+${p.value} над ${euro(p.min_total_cents)}` : '');
   $('promoRows').replaceChildren(...promotions.map((p) => el('tr', { class: p.active ? '' : 'off' },
-    el('td', {}, el('b', {}, p.title), p.active ? '' : ' (спряна)'),
+    el('td', {}, el('b', {}, p.title), p.active ? '' : ' (спряна)', p.weather ? el('div', { class: 'muted' }, WEATHER_WHEN[p.weather]) : ''),
     el('td', {}, `${KINDS[p.kind]} ${what(p)}`),
     el('td', {}, p.ends_at ? day(p.ends_at) : 'без край'),
     el('td', { class: 'num' }, String(p.activations)),

@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS promotions (
   ends_at TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   image_url TEXT NOT NULL DEFAULT '',
+  -- празно: важи винаги; sun, clouds, rain, fog или snow: показва се само при такова време навън
+  weather TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS activations (
@@ -234,6 +236,7 @@ function upgrade(db) {
   add('customers', 'favorite_store_id', 'INTEGER');
   add('customers', 'news_seen_at', 'TEXT');
   add('promotions', 'image_url', "TEXT NOT NULL DEFAULT ''");
+  add('promotions', 'weather', "TEXT NOT NULL DEFAULT ''");
   if (!has(db, 'customers', 'email')) customersToEmail(db);
   // в първата версия книгата с точките не допускаше причина „bonus“; правилото се сменя само с нова таблица
   const ledger = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'points_ledger'").get().sql;

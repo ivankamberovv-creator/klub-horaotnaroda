@@ -6,6 +6,8 @@ import { Button, Card, ErrorText, Eyebrow, H1, Loading, P, s } from '../componen
 import { Icon } from '../components/Icon';
 import { useLoad } from '../useLoad';
 import { colors, day, euro, fonts, radius } from '../theme';
+import { WeatherScene } from '../components/WeatherScene';
+import { skyColor, weatherLabel } from '../weather';
 
 const effect = (p: Promotion) => (p.kind === 'discount' ? `Отстъпка ${p.value}% на касата`
   : p.kind === 'double_points' ? (p.value === 2 ? 'Двойни точки' : `Точки по ${p.value}`)
@@ -66,13 +68,20 @@ export function Offers({ onChanged }: { onChanged: () => void }) {
         const ex = expiry(p.ends_at);
         return (
           <Card key={p.id} active={p.activated} style={{ padding: 0, gap: 0, overflow: 'hidden' }}>
-            {p.image_url ? <Image source={{ uri: mediaUrl(p.image_url) }} style={st.image} resizeMode="cover" accessibilityIgnoresInvertColors /> : null}
+            {p.image_url ? <Image source={{ uri: mediaUrl(p.image_url) }} style={st.image} resizeMode="cover" accessibilityIgnoresInvertColors />
+              : p.weather ? (
+                <View testID={`weatherHead-${p.id}`} style={[st.sky, { backgroundColor: skyColor(p.weather) }]}>
+                  <Text style={st.skyText}>{weatherLabel[p.weather]}</Text>
+                  <WeatherScene kind={p.weather} width={150} height={76} />
+                </View>
+              ) : null}
             <View style={{ padding: 16, gap: 12 }}>
               <View style={{ gap: 4 }}>
                 {p.tag ? <Eyebrow>{p.tag}</Eyebrow> : null}
                 <Text style={st.title}>{p.title}</Text>
                 {p.description ? <P muted style={{ fontSize: 15 }}>{p.description}</P> : null}
                 {effect(p) && effect(p) !== p.title ? <P style={{ fontSize: 14, fontFamily: fonts.semi }}>{effect(p)}</P> : null}
+                {p.weather ? <Text style={[st.expiry, { color: colors.greenDeep, fontFamily: fonts.semi }]}>{p.activated ? 'Важи до края на деня' : 'Само докато времето е такова'}</Text> : null}
                 {ex ? <Text style={[st.expiry, ex.soon && { color: colors.redText, fontFamily: fonts.semi }]}>{ex.text}</Text> : null}
               </View>
               {p.activated ? (
@@ -98,6 +107,8 @@ const st = StyleSheet.create({
   chip: { minHeight: 44, paddingHorizontal: 16, borderRadius: 22, borderWidth: 1, borderColor: colors.lineStrong, alignItems: 'center', justifyContent: 'center' },
   chipText: { fontFamily: fonts.semi, fontSize: 14, color: colors.ink },
   image: { width: '100%', height: 150, backgroundColor: colors.paper },
+  sky: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: 76, paddingLeft: 16 },
+  skyText: { fontFamily: fonts.old, fontSize: 22, color: colors.white },
   title: { fontFamily: fonts.old, fontSize: 22, lineHeight: 25, color: colors.ink },
   expiry: { fontFamily: fonts.body, fontSize: 13, color: colors.muted, borderRadius: radius },
 });

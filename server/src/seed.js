@@ -29,6 +29,18 @@ export function seedDemoMissions(db) {
   return true;
 }
 
+/** Примерни оферти според времето, по една за всеки вид, за да има какво да се види в демото каквото и да е навън */
+export function seedDemoWeather(db) {
+  if (db.prepare("SELECT COUNT(*) n FROM promotions WHERE weather != ''").get().n) return false;
+  const today = 'Активирайте я, докато времето е такова. Важи до края на деня.';
+  adminSavePromotion(db, { weather: 'sun', title: 'Слънчев ден: +15 точки', tag: 'Защото е слънчево', kind: 'bonus_points', value: 15, min_total_cents: 1000, description: `При покупка над 10 €. ${today}` });
+  adminSavePromotion(db, { weather: 'clouds', title: 'Облачно е: +10 точки', tag: 'Защото е облачно', kind: 'bonus_points', value: 10, min_total_cents: 1000, description: `При покупка над 10 €. ${today}` });
+  adminSavePromotion(db, { weather: 'rain', title: 'Вали дъжд: двойни точки', tag: 'Защото вали', kind: 'double_points', value: 2, description: `За всяка покупка днес. ${today}` });
+  adminSavePromotion(db, { weather: 'fog', title: 'Мъгливо е: +20 точки', tag: 'Защото е мъгливо', kind: 'bonus_points', value: 20, min_total_cents: 1000, description: `При покупка над 10 €. ${today}` });
+  adminSavePromotion(db, { weather: 'snow', title: 'Вали сняг: тройни точки', tag: 'Защото вали сняг', kind: 'double_points', value: 3, description: `За всяка покупка днес. ${today}` });
+  return true;
+}
+
 /**
  * Магазините при първо пускане: списъкът към 15.11.2026 (име, адрес, телефон, работно време).
  * След това се поддържат от управлението, раздел „Магазини“; този файл повече не се чете.
