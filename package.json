@@ -1,0 +1,12 @@
+{
+  "name": "klub-horaotnaroda",
+  "private": true,
+  "description": "Клуб „Хора от Народа“: команди за целия проект",
+  "scripts": {
+    "setup": "npm --prefix server install && npm --prefix app install",
+    "build": "node tools/build-web.mjs",
+    "demo": "npm --prefix server run demo",
+    "demo:lan": "npm --prefix server run demo:lan",
+    "test": "npm --prefix server test && npm --prefix app test && npm --prefix app run typecheck"
+  }
+}

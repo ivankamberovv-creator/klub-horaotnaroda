@@ -1,4 +1,5 @@
 // Пуска сървъра. Настройките идват от променливи на средата (вижте README.md).
+import { networkInterfaces } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
@@ -9,11 +10,15 @@ import { seedDemo, seedStores } from './seed.js';
 import { recordPurchase, getSetting, setSetting, nowIso } from './core.js';
 
 const env = process.env;
-const demo = env.DEMO === '1';
+// демото се пуска с DEMO=1 или с --demo (второто работи еднакво на Windows, macOS и Linux)
+const args = process.argv.slice(2);
+const demo = env.DEMO === '1' || args.includes('--demo');
+// --lan отваря сървъра за другите устройства в мрежата, за проба от телефон
+const lan = args.includes('--lan');
 const config = {
   demo,
   port: Number(env.PORT || 4100),
-  host: env.HOST || '127.0.0.1',
+  host: env.HOST || (lan ? '0.0.0.0' : '127.0.0.1'),
   dbPath: env.DB_PATH || (demo ? './data/demo.db' : './data/klub.db'),
   adminPassword: env.ADMIN_PASSWORD || (demo ? 'demo-admin' : ''),
   kasaPin: env.KASA_PIN || (demo ? '1234' : ''),
@@ -77,3 +82,8 @@ if (kasa.fetchSales) {
 
 await app.listen({ port: config.port, host: config.host });
 console.log(`Клубът слуша на http://${config.host}:${config.port}${demo ? ' (демо: кодовете за вход не се пращат, а се връщат в отговора)' : ''}; каса: ${kasa.name}`);
+if (config.host === '0.0.0.0') {
+  // адресите, на които сървърът се вижда от телефон в същата мрежа
+  const addresses = Object.values(networkInterfaces()).flat().filter((n) => n && n.family === 'IPv4' && !n.internal).map((n) => `http://${n.address}:${config.port}`);
+  if (addresses.length) console.log('От телефон в същата мрежа: ' + addresses.join('  или  '));
+}

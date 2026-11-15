@@ -9,8 +9,9 @@
   },
   "scripts": {
     "start": "node src/main.js",
-    "demo": "DEMO=1 node src/main.js",
-    "test": "node --test"
+    "demo": "node src/main.js --demo",
+    "test": "node --test",
+    "demo:lan": "node src/main.js --demo --lan"
   },
   "dependencies": {
     "@fastify/cors": "^11.4.3",
