@@ -12,6 +12,7 @@ const config = { demo: true, adminPassword: 'admin-parola-123', kasaPin: '654321
 async function setup({ kasa = createDemoKasa(), cfg = config } = {}) {
   const db = openDb(':memory:');
   seedDemo(db);
+  db.exec('UPDATE challenges SET active = 0'); // примерните мисии имат отделни проверки (zabavno.test.js)
   const sent = [];
   const app = await buildApp({ db, config: cfg, sms: { send: async (phone, text) => sent.push({ phone, text }) }, kasa });
   const call = async (method, url, body, token) => {

@@ -4,9 +4,11 @@ import { HomeData, Me, mediaUrl, Promotion } from '../api';
 import { Button, H2, P, s } from '../components/ui';
 import { Icon, IconName } from '../components/Icon';
 import { InstallHint } from '../components/InstallHint';
+import { CountUp } from '../components/CountUp';
+import { Challenges } from '../components/Challenges';
 import { colors, day, dayTime, euro, fonts, pointsWord, radius } from '../theme';
 
-type Target = 'offers' | 'rewards' | 'purchases' | 'news' | 'stores' | 'history';
+type Target = 'offers' | 'rewards' | 'purchases' | 'news' | 'stores' | 'history' | 'scratch' | 'missions';
 type Props = { me: Me; home: HomeData | null; refreshing: boolean; onRefresh: () => void; onShowCard: () => void; onGo: (to: Target) => void };
 
 function OfferTile({ offer, onPress }: { offer: Promotion; onPress: () => void }) {
@@ -45,7 +47,7 @@ export function Home({ me, home, refreshing, onRefresh, onShowCard, onGo }: Prop
       <View style={st.hero}>
         <Text style={st.heroLabel}>Вашите точки</Text>
         <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 10 }}>
-          <Text testID="points" style={st.heroNumber}>{me.points}</Text>
+          <CountUp testID="points" value={me.points} style={st.heroNumber} />
           <Text style={st.heroUnit}>{pointsWord(me.points)}</Text>
         </View>
         <View style={{ gap: 6 }}>
@@ -56,6 +58,17 @@ export function Home({ me, home, refreshing, onRefresh, onShowCard, onGo }: Prop
         </View>
         <Button testID="showCard" title="Покажете картата на касата" kind="light" onPress={onShowCard} />
       </View>
+
+      {me.scratchCards > 0 ? (
+        <Pressable testID="toScratch" accessibilityRole="button" onPress={() => onGo('scratch')} style={st.scratch}>
+          <Icon name="star" size={30} color={colors.white} filled />
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={st.scratchTitle}>{me.scratchCards === 1 ? 'Имате талон за изтриване' : `Имате ${me.scratchCards} талона за изтриване`}</Text>
+            <Text style={st.scratchSub}>Изтрийте го и вижте колко точки печелите</Text>
+          </View>
+          <Icon name="chevron" size={22} color={colors.white} />
+        </Pressable>
+      ) : null}
 
       <InstallHint />
 
@@ -76,6 +89,18 @@ export function Home({ me, home, refreshing, onRefresh, onShowCard, onGo }: Prop
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 20 }} style={{ marginRight: -20 }}>
             {home.offers.map((o) => <OfferTile key={o.id} offer={o} onPress={() => onGo('offers')} />)}
           </ScrollView>
+        </View>
+      ) : null}
+
+      {home && home.challenges.length > 0 ? (
+        <View style={{ gap: 10 }}>
+          <View style={st.headRow}>
+            <H2>Мисии</H2>
+            <Pressable accessibilityRole="button" onPress={() => onGo('missions')} hitSlop={10} style={{ minHeight: 44, justifyContent: 'center' }}>
+              <Text style={st.link}>Вижте всички</Text>
+            </Pressable>
+          </View>
+          <Challenges challenges={home.challenges.slice(0, 2)} />
         </View>
       ) : null}
 
@@ -126,6 +151,9 @@ const st = StyleSheet.create({
   track: { height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.22)', overflow: 'hidden' },
   fill: { height: 8, backgroundColor: colors.white },
   heroHint: { fontFamily: fonts.body, fontSize: 14, color: '#e6faf1' },
+  scratch: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderRadius: radius, backgroundColor: colors.redText, minHeight: 64 },
+  scratchTitle: { fontFamily: fonts.bold, fontSize: 17, color: colors.white },
+  scratchSub: { fontFamily: fonts.body, fontSize: 14, color: '#ffe3de' },
   shortcut: { flex: 1, minHeight: 72, borderWidth: 1, borderColor: colors.line, borderRadius: radius, alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 4 },
   shortcutText: { fontFamily: fonts.semi, fontSize: 13, color: colors.ink },
   headRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },

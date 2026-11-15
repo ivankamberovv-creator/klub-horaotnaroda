@@ -184,12 +184,14 @@ export function pointsHistory(db, customerId, limit = 100) {
   const rows = db.prepare(`
     SELECT l.id, l.delta, l.reason, l.ref, l.created_at,
            CASE WHEN l.reason = 'purchase' THEN (SELECT shop FROM purchases p WHERE p.id = CAST(l.ref AS INTEGER)) END shop,
-           CASE WHEN l.reason IN ('reward','reward_refund') THEN (SELECT reward_title FROM redemptions r WHERE r.id = CAST(l.ref AS INTEGER)) END reward
+           CASE WHEN l.reason IN ('reward','reward_refund') THEN (SELECT reward_title FROM redemptions r WHERE r.id = CAST(l.ref AS INTEGER)) END reward,
+           CASE WHEN l.reason = 'bonus' AND l.ref LIKE 'challenge-%' THEN (SELECT title FROM challenges ch WHERE ch.id = CAST(substr(l.ref, 11) AS INTEGER)) END challenge
     FROM points_ledger l WHERE l.customer_id = ? ORDER BY l.id DESC LIMIT ?`).all(customerId, limit);
   const label = (r) => (r.reason === 'purchase' ? `Покупка${r.shop ? ': ' + r.shop : ''}`
     : r.reason === 'reward' ? `Награда: ${r.reward ?? ''}`.trim()
       : r.reason === 'reward_refund' ? `Върнати точки: ${r.reward ?? ''}`.trim()
-        : r.reason === 'bonus' ? (r.ref === 'welcome' ? 'Добре дошли в клуба' : String(r.ref).startsWith('birthday-') ? 'Честит рожден ден' : 'Подарък от клуба')
+        : r.reason === 'bonus' ? (r.ref === 'welcome' ? 'Добре дошли в клуба' : String(r.ref).startsWith('birthday-') ? 'Честит рожден ден'
+          : String(r.ref).startsWith('scratch-') ? 'Талон за изтриване' : String(r.ref).startsWith('challenge-') ? `Изпълнена мисия${r.challenge ? ': ' + r.challenge : ''}` : 'Подарък от клуба')
           : 'Корекция от магазина');
   return rows.map((r) => ({ id: r.id, delta: r.delta, label: label(r), at: r.created_at }));
 }
@@ -281,7 +283,7 @@ export function pointsFor(db, customerId, totalCents, at, pointsPerEuro = 1) {
  * Записва покупка, дошла от касата, и начислява точките. Втори запис на същия документ не прави нищо.
  * p: { source, externalId, cardCode | customerId, shop, totalCents, discountCents, purchasedAt, items: [{ name, quantity, totalCents }] }
  */
-export function recordPurchase(db, p, { pointsPerEuro = 1 } = {}) {
+export function recordPurchase(db, p, { pointsPerEuro = 1, scratch = null } = {}) {
   return db.transaction(() => {
     const customer = p.customerId ? getCustomer(db, p.customerId) : getCustomerByCard(db, p.cardCode);
     if (!customer) return { skipped: 'unknown_customer' };
@@ -298,7 +300,10 @@ export function recordPurchase(db, p, { pointsPerEuro = 1 } = {}) {
       db.prepare("INSERT INTO points_ledger (customer_id, delta, reason, ref, created_at) VALUES (?, ?, 'purchase', ?, ?)")
         .run(customer.id, points, String(id), nowIso());
     }
-    return { purchase: db.prepare('SELECT * FROM purchases WHERE id = ?').get(id), duplicate: false };
+    // забавната част: талон за изтриване и напредък по мисиите
+    const scratchCard = createScratchCard(db, customer.id, id, p.totalCents, scratch);
+    const completed = completeChallenges(db, customer.id, at);
+    return { purchase: db.prepare('SELECT * FROM purchases WHERE id = ?').get(id), duplicate: false, scratchCard, completed };
   })();
 }
 
@@ -317,6 +322,118 @@ export function getPurchase(db, customerId, purchaseId) {
 export const purchaseTotals = (db, customerId) => db.prepare(`SELECT COUNT(*) count, COALESCE(SUM(total_cents), 0) total_cents,
   COALESCE(SUM(discount_cents), 0) discount_cents FROM purchases WHERE customer_id = ?`).get(customerId);
 
+// ---- талони за изтриване ----
+
+/** „5:55,10:30,20:12,50:3“ → [{ points, weight }]: точки и тежест (колко често се пада). Празно = няма талони. */
+export function parsePrizes(textValue) {
+  const prizes = String(textValue ?? '').split(',').map((part) => part.trim()).filter(Boolean).map((part) => {
+    const [points, weight] = part.split(':').map(Number);
+    if (!Number.isInteger(points) || points < 1 || !Number.isInteger(weight) || weight < 1) throw new Error(`Наградите за талоните не са верни: „${part}“. Очаква се „точки:тежест“, например 10:30.`);
+    return { points, weight };
+  });
+  return prizes;
+}
+
+/** Тегли награда според тежестите; случайността е от системата, не от Math.random */
+export function drawPrize(prizes, pick = (max) => crypto.randomInt(0, max)) {
+  const total = prizes.reduce((sum, p) => sum + p.weight, 0);
+  let n = pick(total);
+  for (const p of prizes) {
+    if (n < p.weight) return p.points;
+    n -= p.weight;
+  }
+  return prizes[prizes.length - 1].points;
+}
+
+/** След покупка над минималната сума клиентът получава талон. Всеки талон печели; колко, се решава тук. */
+function createScratchCard(db, customerId, purchaseId, totalCents, scratch) {
+  if (!scratch || !scratch.prizes?.length || totalCents < (scratch.minCents ?? 0)) return null;
+  const id = db.prepare("INSERT INTO scratch_cards (customer_id, purchase_id, prize_points, status, created_at) VALUES (?, ?, ?, 'new', ?)")
+    .run(customerId, purchaseId, drawPrize(scratch.prizes), nowIso()).lastInsertRowid;
+  return { id };
+}
+
+/** Талоните на клиента: неизтритите първи. Наградата се показва само на вече изтритите. */
+export function listScratchCards(db, customerId, limit = 30) {
+  return db.prepare(`SELECT s.id, s.status, s.created_at, s.revealed_at, s.prize_points, p.shop
+    FROM scratch_cards s JOIN purchases p ON p.id = s.purchase_id
+    WHERE s.customer_id = ? ORDER BY s.status = 'new' DESC, s.id DESC LIMIT ?`).all(customerId, limit)
+    .map((s) => ({ id: s.id, status: s.status, shop: s.shop, created_at: s.created_at, revealed_at: s.revealed_at, prize: s.status === 'revealed' ? s.prize_points : null }));
+}
+
+/** Изтриване на талона: точките се начисляват веднага и само веднъж. */
+export function revealScratchCard(db, customerId, cardId) {
+  return db.transaction(() => {
+    const card = db.prepare('SELECT * FROM scratch_cards WHERE id = ? AND customer_id = ?').get(cardId, customerId);
+    if (!card) throw new AppError('no_scratch', 'Няма такъв талон.', 404);
+    if (card.status === 'revealed') throw new AppError('already_revealed', 'Този талон вече е изтрит.', 409);
+    const at = nowIso();
+    db.prepare("UPDATE scratch_cards SET status = 'revealed', revealed_at = ? WHERE id = ?").run(at, card.id);
+    db.prepare("INSERT INTO points_ledger (customer_id, delta, reason, ref, created_at) VALUES (?, ?, 'bonus', ?, ?)")
+      .run(customerId, card.prize_points, `scratch-${card.id}`, at);
+    return { id: card.id, prize: card.prize_points, points: balance(db, customerId) };
+  })();
+}
+
+// ---- мисии ----
+
+const CHALLENGE_OPEN = 'ch.active = 1 AND ch.starts_at <= @at AND (ch.ends_at IS NULL OR ch.ends_at > @at)';
+
+/** Докъде е стигнал клиентът по една мисия: брой покупки или похарчени евроцентове в срока ѝ */
+function challengeProgress(db, customerId, ch) {
+  const row = db.prepare(`SELECT COUNT(*) count, COALESCE(SUM(total_cents), 0) cents FROM purchases
+    WHERE customer_id = ? AND purchased_at >= ? AND (? IS NULL OR purchased_at < ?)`).get(customerId, ch.starts_at, ch.ends_at, ch.ends_at);
+  return ch.kind === 'purchases' ? row.count : row.cents;
+}
+
+/** Текущите мисии с напредъка на клиента; изпълнените остават видими, докато мисията тече */
+export function listChallenges(db, customerId, at = nowIso()) {
+  return db.prepare(`SELECT ch.*, c.completed_at FROM challenges ch
+    LEFT JOIN challenge_completions c ON c.challenge_id = ch.id AND c.customer_id = @customerId
+    WHERE ${CHALLENGE_OPEN} ORDER BY c.completed_at IS NOT NULL, ch.ends_at IS NULL, ch.ends_at, ch.id`).all({ customerId, at })
+    .map((ch) => ({ id: ch.id, title: ch.title, description: ch.description, kind: ch.kind, goal: ch.goal, reward_points: ch.reward_points, ends_at: ch.ends_at,
+      progress: Math.min(ch.goal, challengeProgress(db, customerId, ch)), done: Boolean(ch.completed_at) }));
+}
+
+/** След всяка покупка: мисиите, чиято цел вече е стигната, се приключват и носят точките си (всяка само веднъж). */
+function completeChallenges(db, customerId, at) {
+  const open = db.prepare(`SELECT ch.* FROM challenges ch
+    WHERE ${CHALLENGE_OPEN} AND NOT EXISTS (SELECT 1 FROM challenge_completions c WHERE c.challenge_id = ch.id AND c.customer_id = @customerId)`).all({ customerId, at });
+  const done = [];
+  for (const ch of open) {
+    if (challengeProgress(db, customerId, ch) < ch.goal) continue;
+    const now = nowIso();
+    db.prepare('INSERT INTO challenge_completions (challenge_id, customer_id, completed_at) VALUES (?, ?, ?)').run(ch.id, customerId, now);
+    db.prepare("INSERT INTO points_ledger (customer_id, delta, reason, ref, created_at) VALUES (?, ?, 'bonus', ?, ?)").run(customerId, ch.reward_points, `challenge-${ch.id}`, now);
+    done.push({ id: ch.id, title: ch.title, reward_points: ch.reward_points });
+  }
+  return done;
+}
+
+export const adminListChallenges = (db) => db.prepare(`SELECT ch.*, (SELECT COUNT(*) FROM challenge_completions c WHERE c.challenge_id = ch.id) completions
+  FROM challenges ch ORDER BY ch.id DESC`).all();
+export function adminSaveChallenge(db, body, id = null) {
+  const title = text(body.title, 80);
+  if (title.length < 2) throw new AppError('bad_title', 'Напишете заглавие на мисията.');
+  if (body.kind !== 'purchases' && body.kind !== 'spend') throw new AppError('bad_kind', 'Изберете вид на мисията.');
+  const goal = Number(body.goal), reward = Number(body.reward_points);
+  if (!Number.isInteger(goal) || goal < 1 || goal > 10_000_000) throw new AppError('bad_goal', body.kind === 'purchases' ? 'Броят покупки трябва да е цяло число над нула.' : 'Сумата на мисията не е вярна.');
+  if (!Number.isInteger(reward) || reward < 1 || reward > 100_000) throw new AppError('bad_reward', 'Точките за мисията трябва да са цяло число над нула.');
+  const starts = isoOrNull(body.starts_at) ?? nowIso(), ends = isoOrNull(body.ends_at);
+  if (ends && ends <= starts) throw new AppError('bad_dates', 'Краят трябва да е след началото.');
+  const f = { title, description: text(body.description, 300), kind: body.kind, goal, reward_points: reward, starts_at: starts, ends_at: ends,
+    active: body.active === false || body.active === 0 ? 0 : 1 };
+  if (id === null) {
+    id = db.prepare(`INSERT INTO challenges (title, description, kind, goal, reward_points, starts_at, ends_at, active, created_at)
+      VALUES (@title, @description, @kind, @goal, @reward_points, @starts_at, @ends_at, @active, @created_at)`).run({ ...f, created_at: nowIso() }).lastInsertRowid;
+  } else {
+    const done = db.prepare(`UPDATE challenges SET title=@title, description=@description, kind=@kind, goal=@goal, reward_points=@reward_points,
+      starts_at=@starts_at, ends_at=@ends_at, active=@active WHERE id=@id`).run({ ...f, id });
+    if (!done.changes) throw new AppError('no_challenge', 'Няма такава мисия.', 404);
+  }
+  return db.prepare('SELECT * FROM challenges WHERE id = ?').get(id);
+}
+
 // ---- обобщение за приложението и за касата ----
 
 /** Всичко за началния екран на приложението */
@@ -327,6 +444,7 @@ export function customerSummary(db, customerId, { pointsPerEuro = 1 } = {}) {
   return {
     id: c.id, name: c.name, phone: c.phone, cardCode: c.card_code, points, pointsPerEuro,
     birthday: formatBirthday(c.birthday), favoriteStoreId: c.favorite_store_id ?? null, unreadNews: unreadNews(db, c),
+    scratchCards: db.prepare("SELECT COUNT(*) n FROM scratch_cards WHERE customer_id = ? AND status = 'new'").get(customerId).n,
     nextReward: next ? { title: next.title, costPoints: next.cost_points, missing: next.cost_points - points } : null,
     activePromotions: activePromotions(db, customerId).length,
     pendingRewards: db.prepare("SELECT COUNT(*) n FROM redemptions WHERE customer_id = ? AND status = 'pending'").get(customerId).n,
@@ -502,6 +620,7 @@ export function home(db, customerId, opts = {}) {
     offers: listPromotions(db, customerId).slice(0, 8),
     lastPurchase: listPurchases(db, customerId, 1)[0] ?? null,
     news: listNews(db, 3),
+    challenges: listChallenges(db, customerId),
   };
 }
 

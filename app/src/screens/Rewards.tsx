@@ -6,7 +6,7 @@ import { Button, Card, ErrorText, H1, H2, Loading, P, s } from '../components/ui
 import { useLoad } from '../useLoad';
 import { colors, day, fonts, pointsWord, radius } from '../theme';
 
-export function Rewards({ onChanged, onShowCode, onHistory }: { onChanged: () => void; onShowCode: () => void; onHistory: () => void }) {
+export function Rewards({ onChanged, onShowCode, onHistory, onParty }: { onChanged: () => void; onShowCode: () => void; onHistory: () => void; onParty: () => void }) {
   const { data, setData, error, setError, refreshing, refresh } = useLoad(() => api.rewards());
   const [confirmId, setConfirmId] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -18,6 +18,7 @@ export function Rewards({ onChanged, onShowCode, onHistory }: { onChanged: () =>
       setData((d) => (d ? { ...d, points: done.points, redemptions: done.redemptions } : d));
       setError('');
       setConfirmId(null);
+      onParty(); // наградата е Ваша: малко конфети
       onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Нещо се обърка. Опитайте пак.');

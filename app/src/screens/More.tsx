@@ -9,10 +9,14 @@ import { Stores } from './Stores';
 import { News } from './News';
 import { Profile } from './Profile';
 import { About } from './About';
+import { Scratch } from './Scratch';
+import { Missions } from './Missions';
 import { colors, fonts, radius } from '../theme';
 
-export type MoreSection = 'menu' | 'purchases' | 'history' | 'stores' | 'news' | 'profile' | 'about';
+export type MoreSection = 'menu' | 'scratch' | 'missions' | 'purchases' | 'history' | 'stores' | 'news' | 'profile' | 'about';
 const ITEMS: { id: Exclude<MoreSection, 'menu'>; label: string; icon: IconName }[] = [
+  { id: 'scratch', label: 'Талони за изтриване', icon: 'star' },
+  { id: 'missions', label: 'Мисии', icon: 'check' },
   { id: 'purchases', label: 'Моите покупки', icon: 'receipt' },
   { id: 'history', label: 'История на точките', icon: 'history' },
   { id: 'stores', label: 'Магазини', icon: 'pin' },
@@ -23,10 +27,10 @@ const ITEMS: { id: Exclude<MoreSection, 'menu'>; label: string; icon: IconName }
 
 type Props = {
   me: Me; section: MoreSection; onSection: (s: MoreSection) => void; onMe: (me: Me) => void;
-  onNewsSeen: () => void; onLogout: () => void; onDeleted: () => void;
+  onNewsSeen: () => void; onLogout: () => void; onDeleted: () => void; onWon: () => void;
 };
 
-export function More({ me, section, onSection, onMe, onNewsSeen, onLogout, onDeleted }: Props) {
+export function More({ me, section, onSection, onMe, onNewsSeen, onLogout, onDeleted, onWon }: Props) {
   if (section !== 'menu') {
     return (
       <View style={{ flex: 1 }}>
@@ -35,6 +39,8 @@ export function More({ me, section, onSection, onMe, onNewsSeen, onLogout, onDel
           <Text style={st.backText}>Още</Text>
         </Pressable>
         <View style={{ flex: 1 }}>
+          {section === 'scratch' && <Scratch onWon={onWon} />}
+          {section === 'missions' && <Missions />}
           {section === 'purchases' && <Purchases />}
           {section === 'history' && <History />}
           {section === 'stores' && <Stores me={me} onMe={onMe} />}
@@ -55,6 +61,7 @@ export function More({ me, section, onSection, onMe, onNewsSeen, onLogout, onDel
             <Icon name={it.icon} color={colors.greenDeep} />
             <Text style={st.itemText}>{it.label}</Text>
             {it.id === 'news' && me.unreadNews > 0 ? <View style={st.badge}><Text style={st.badgeText}>{me.unreadNews}</Text></View> : null}
+            {it.id === 'scratch' && me.scratchCards > 0 ? <View style={st.badge}><Text style={st.badgeText}>{me.scratchCards}</Text></View> : null}
             <Icon name="chevron" size={20} color={colors.muted} />
           </Pressable>
         ))}

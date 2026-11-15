@@ -41,7 +41,7 @@ must('</head>', `  <meta name="description" content="Карта за касат�
   </head>`);
 must('<noscript> You need to enable JavaScript to run this app. </noscript>', '<noscript>Приложението има нужда от JavaScript. Включете го в настройките на браузъра.</noscript>');
 must('</body>', `  <script>
-      if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js'); });
+      if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js').catch(function () { /* без него приложението пак работи, само не и без интернет */ }); });
     </script>
   </body>`);
 writeFileSync(join(dist, 'index.html'), html);

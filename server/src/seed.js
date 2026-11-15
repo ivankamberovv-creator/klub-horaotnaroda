@@ -1,6 +1,6 @@
 // Примерни промоции и награди за демото. Не са истински: числата и условията ги решава собственикът.
 import { readFileSync } from 'node:fs';
-import { adminSavePromotion, adminSaveReward, adminSaveNews, adminSaveStore } from './core.js';
+import { adminSavePromotion, adminSaveReward, adminSaveNews, adminSaveStore, adminSaveChallenge } from './core.js';
 
 export function seedDemo(db) {
   if (db.prepare('SELECT COUNT(*) n FROM promotions').get().n || db.prepare('SELECT COUNT(*) n FROM rewards').get().n) return false;
@@ -15,7 +15,17 @@ export function seedDemo(db) {
   adminSaveReward(db, { title: 'Отстъпка 2 €', description: 'От следващата Ви покупка.', cost_points: 100 });
   adminSaveReward(db, { title: 'Отстъпка 5 €', description: 'От следващата Ви покупка.', cost_points: 250 });
   adminSaveReward(db, { title: 'Билков екстракт по избор', description: 'Едно шишенце от 20 мл.', cost_points: 400 });
+  seedDemoMissions(db);
   adminSaveNews(db, { title: 'Добре дошли в клуба', body: 'Показвайте кода си на касата при всяка покупка и събирайте точки. Това е примерна новина: истинските се пишат от управлението.' });
+  return true;
+}
+
+/** Примерни мисии за демото; добавят се и към по-стара демо база, която още няма мисии */
+export function seedDemoMissions(db) {
+  if (db.prepare('SELECT COUNT(*) n FROM challenges').get().n) return false;
+  const month = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  adminSaveChallenge(db, { title: 'Три покупки този месец', description: 'Пазарувайте три пъти с картата си.', kind: 'purchases', goal: 3, reward_points: 50, ends_at: month });
+  adminSaveChallenge(db, { title: 'Пазарувайте за 100 €', description: 'Общо за месеца, във всички наши магазини.', kind: 'spend', goal: 10000, reward_points: 100, ends_at: month });
   return true;
 }
 

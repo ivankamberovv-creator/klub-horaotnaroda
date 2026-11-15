@@ -6,8 +6,8 @@ import { openDb } from './db.js';
 import { buildApp } from './app.js';
 import { createSms } from './sms.js';
 import { createKasa } from './connectors/index.js';
-import { seedDemo, seedStores } from './seed.js';
-import { recordPurchase, getSetting, setSetting, nowIso } from './core.js';
+import { seedDemo, seedDemoMissions, seedStores } from './seed.js';
+import { recordPurchase, getSetting, setSetting, nowIso, parsePrizes } from './core.js';
 
 const env = process.env;
 // демото се пуска с DEMO=1 или с --demo (второто работи еднакво на Windows, macOS и Linux)
@@ -26,6 +26,8 @@ const config = {
   // точки за добре дошли и за рожден ден; 0 ги изключва
   welcomePoints: Number(env.WELCOME_POINTS || (demo ? 20 : 0)),
   birthdayPoints: Number(env.BIRTHDAY_POINTS || (demo ? 50 : 0)),
+  // талони за изтриване: от каква покупка нагоре се дават и какво може да се падне („точки:тежест“); без награди няма талони
+  scratch: { minCents: Math.round(Number(env.SCRATCH_MIN_EURO || (demo ? 5 : 0)) * 100), prizes: parsePrizes(env.SCRATCH_PRIZES ?? (demo ? '5:55,10:30,20:12,50:3' : '')) },
   cardPrefix: env.CARD_PREFIX || '29',
   corsOrigin: env.CORS_ORIGIN || (demo ? '*' : ''),
   trustProxy: env.TRUST_PROXY === '1',
@@ -56,6 +58,7 @@ if (!demo) {
 
 const db = openDb(config.dbPath);
 if (demo && seedDemo(db)) console.log('Демо: добавих примерни промоции, награди и новини.');
+if (demo && seedDemoMissions(db)) console.log('Демо: добавих примерни мисии.');
 if (seedStores(db)) console.log('Добавих списъка с магазините; поддържа се от управлението.');
 const sms = createSms({ provider: config.smsProvider });
 const kasa = createKasa(config);
@@ -68,7 +71,7 @@ async function sync() {
     const started = nowIso();
     const sales = await kasa.fetchSales(since);
     let added = 0;
-    for (const s of sales) if (recordPurchase(db, { ...s, source: kasa.name }, { pointsPerEuro: config.pointsPerEuro }).duplicate === false) added++;
+    for (const s of sales) if (recordPurchase(db, { ...s, source: kasa.name }, { pointsPerEuro: config.pointsPerEuro, scratch: config.scratch }).duplicate === false) added++;
     setSetting(db, 'sales_cursor', started);
     if (added) console.log(`Каса ${kasa.name}: ${added} нови покупки.`);
   } catch (err) {

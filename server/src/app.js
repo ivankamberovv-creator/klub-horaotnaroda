@@ -57,7 +57,7 @@ export async function buildApp({ db, config, sms, kasa }) {
     if (!s || !roles.includes(s.role)) throw new AppError('unauthorized', 'Влезте отново.', 401);
     req.role = s.role;
   };
-  const opts = { pointsPerEuro: config.pointsPerEuro };
+  const opts = { pointsPerEuro: config.pointsPerEuro, scratch: config.scratch ?? null };
   /** Профилът на клиента; пътьом дава точките за рожден ден, ако днес му е денят */
   const me = (customerId) => {
     core.grantBirthdayBonus(db, customerId, config.birthdayPoints ?? 0);
@@ -124,6 +124,9 @@ export async function buildApp({ db, config, sms, kasa }) {
   }));
   app.get('/api/purchases/:id', { preHandler: customerOnly }, async (req) => core.getPurchase(db, req.customerId, id(req.params.id)));
 
+  app.get('/api/scratch', { preHandler: customerOnly }, async (req) => ({ cards: core.listScratchCards(db, req.customerId) }));
+  app.post('/api/scratch/:id/reveal', { preHandler: customerOnly }, async (req) => core.revealScratchCard(db, req.customerId, id(req.params.id)));
+  app.get('/api/challenges', { preHandler: customerOnly }, async (req) => ({ challenges: core.listChallenges(db, req.customerId) }));
   app.get('/api/points-history', { preHandler: customerOnly }, async (req) => ({ points: core.balance(db, req.customerId), history: core.pointsHistory(db, req.customerId) }));
   app.get('/api/stores', { preHandler: customerOnly }, async () => ({ stores: core.listStores(db) }));
   app.get('/api/news', { preHandler: customerOnly }, async (req) => {
@@ -153,7 +156,7 @@ export async function buildApp({ db, config, sms, kasa }) {
       items: Array.isArray(b.items) ? b.items.slice(0, 50).map((it) => ({ name: String(it.name).slice(0, 120), quantity: Number(it.quantity) || 1, totalCents: Number(it.totalCents) || 0 })) : [],
     }, opts);
     if (result.skipped) throw new AppError('no_customer', 'Няма клиент с такъв код.', 404);
-    return { purchase: result.purchase, points: core.balance(db, result.purchase.customer_id) };
+    return { purchase: result.purchase, points: core.balance(db, result.purchase.customer_id), scratchCard: Boolean(result.scratchCard), completed: result.completed };
   });
 
   const admin = { preHandler: staff('admin') };
@@ -164,6 +167,9 @@ export async function buildApp({ db, config, sms, kasa }) {
   app.get('/api/admin/rewards', admin, async () => ({ rewards: core.adminListRewards(db) }));
   app.post('/api/admin/rewards', admin, async (req) => core.adminSaveReward(db, req.body || {}));
   app.put('/api/admin/rewards/:id', admin, async (req) => core.adminSaveReward(db, req.body || {}, id(req.params.id)));
+  app.get('/api/admin/challenges', admin, async () => ({ challenges: core.adminListChallenges(db) }));
+  app.post('/api/admin/challenges', admin, async (req) => core.adminSaveChallenge(db, req.body || {}));
+  app.put('/api/admin/challenges/:id', admin, async (req) => core.adminSaveChallenge(db, req.body || {}, id(req.params.id)));
   app.get('/api/admin/stores', admin, async () => ({ stores: core.adminListStores(db) }));
   app.post('/api/admin/stores', admin, async (req) => core.adminSaveStore(db, req.body || {}));
   app.put('/api/admin/stores/:id', admin, async (req) => core.adminSaveStore(db, req.body || {}, id(req.params.id)));

@@ -18,6 +18,7 @@ const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwA
 async function setup(extra = {}) {
   const db = openDb(':memory:');
   seedDemo(db);
+  db.exec('UPDATE challenges SET active = 0'); // примерните мисии имат отделни проверки (zabavno.test.js)
   seedStores(db);
   const config = { ...base, uploadDir: mkdtempSync(join(tmpdir(), 'klub-')), ...extra };
   const app = await buildApp({ db, config, sms: { send: async () => {} }, kasa: createDemoKasa() });

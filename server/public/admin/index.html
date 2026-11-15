@@ -29,6 +29,7 @@
       <button role="tab" data-tab="kasa" aria-selected="true">Каса</button>
       <button role="tab" data-tab="promotions" data-admin aria-selected="false">Оферти</button>
       <button role="tab" data-tab="rewards" data-admin aria-selected="false">Награди</button>
+      <button role="tab" data-tab="challenges" data-admin aria-selected="false">Мисии</button>
       <button role="tab" data-tab="stores" data-admin aria-selected="false">Магазини</button>
       <button role="tab" data-tab="news" data-admin aria-selected="false">Новини</button>
       <button role="tab" data-tab="customers" data-admin aria-selected="false">Клиенти</button>
@@ -95,6 +96,34 @@
         <div class="row"><button class="btn fit" type="submit">Запазете</button><button class="btn ghost fit" type="button" id="rewardReset">Изчистете</button></div>
       </form>
       <div class="tablewrap"><table><thead><tr><th>Награда</th><th class="num">Точки</th><th></th></tr></thead><tbody id="rewardRows"></tbody></table></div>
+    </section>
+
+    <section id="tab-challenges" class="stack" hidden>
+      <form class="card paper" id="challengeForm">
+        <h2 id="challengeFormTitle">Нова мисия</h2>
+        <input type="hidden" id="challengeId">
+        <div class="row">
+          <label>Заглавие<input id="challengeTitle" maxlength="80" placeholder="Три покупки този месец" required></label>
+          <label>Точки за изпълнение<input id="challengeReward" type="number" min="1" step="1" required></label>
+        </div>
+        <label>Описание<textarea id="challengeDescription" maxlength="300"></textarea></label>
+        <div class="row">
+          <label>Вид<select id="challengeKind">
+            <option value="purchases">Брой покупки</option>
+            <option value="spend">Обща сума на покупките</option>
+          </select></label>
+          <label id="challengeGoalLabel">Колко покупки<input id="challengeGoal" inputmode="decimal" required></label>
+        </div>
+        <div class="row">
+          <label>Начало (празно = веднага)<input id="challengeStarts" type="datetime-local"></label>
+          <label>Край (по желание)<input id="challengeEnds" type="datetime-local"></label>
+          <label class="fit" style="align-self:center"><span><input id="challengeActive" type="checkbox" checked style="width:auto;min-height:0"> Активна</span></label>
+        </div>
+        <p class="muted">Броят се само покупките с картата на клиента в срока на мисията. Точките идват сами, с покупката, която я завършва.</p>
+        <p class="err" id="challengeErr" role="alert" hidden></p>
+        <div class="row"><button class="btn fit" type="submit">Запазете</button><button class="btn ghost fit" type="button" id="challengeReset">Изчистете</button></div>
+      </form>
+      <div class="tablewrap"><table><thead><tr><th>Мисия</th><th>Цел</th><th class="num">Точки</th><th>До</th><th class="num">Изпълнили</th><th></th></tr></thead><tbody id="challengeRows"></tbody></table></div>
     </section>
 
     <section id="tab-stores" class="stack" hidden>

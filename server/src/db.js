@@ -132,6 +132,36 @@ CREATE TABLE IF NOT EXISTS news (
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL
 );
+-- Талон за изтриване: идва след покупка; наградата е решена още при създаването, но клиентът я вижда чак като го изтрие.
+CREATE TABLE IF NOT EXISTS scratch_cards (
+  id INTEGER PRIMARY KEY,
+  customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  purchase_id INTEGER NOT NULL UNIQUE REFERENCES purchases(id) ON DELETE CASCADE,
+  prize_points INTEGER NOT NULL CHECK (prize_points > 0),
+  status TEXT NOT NULL CHECK (status IN ('new','revealed')),
+  created_at TEXT NOT NULL,
+  revealed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS scratch_cards_customer ON scratch_cards(customer_id, status);
+-- Мисия: „направете N покупки“ (purchases) или „пазарувайте общо за X“ (spend, в евроцентове) в даден срок, срещу точки.
+CREATE TABLE IF NOT EXISTS challenges (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL CHECK (kind IN ('purchases','spend')),
+  goal INTEGER NOT NULL CHECK (goal > 0),
+  reward_points INTEGER NOT NULL CHECK (reward_points > 0),
+  starts_at TEXT NOT NULL,
+  ends_at TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS challenge_completions (
+  challenge_id INTEGER NOT NULL REFERENCES challenges(id) ON DELETE CASCADE,
+  customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  completed_at TEXT NOT NULL,
+  PRIMARY KEY (challenge_id, customer_id)
+);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL

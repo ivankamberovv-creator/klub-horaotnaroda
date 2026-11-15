@@ -11,7 +11,7 @@ export type Me = {
   id: number; name: string; phone: string; cardCode: string; points: number; pointsPerEuro: number;
   nextReward: { title: string; costPoints: number; missing: number } | null;
   activePromotions: number; pendingRewards: number;
-  birthday: string | null; favoriteStoreId: number | null; unreadNews: number;
+  birthday: string | null; favoriteStoreId: number | null; unreadNews: number; scratchCards: number;
 };
 export type Promotion = {
   id: number; title: string; tag: string; description: string;
@@ -22,7 +22,9 @@ export type DayHours = [string, string] | null | '?';
 export type Store = { id: number; name: string; city: string; address: string; phone: string; hours: DayHours[] | '24/7'; lat: number | null; lng: number | null };
 export type NewsItem = { id: number; title: string; body: string; image_url: string; published_at: string };
 export type HistoryItem = { id: number; delta: number; label: string; at: string };
-export type HomeData = { me: Me; offers: Promotion[]; lastPurchase: Purchase | null; news: NewsItem[] };
+export type Challenge = { id: number; title: string; description: string; kind: 'purchases' | 'spend'; goal: number; reward_points: number; ends_at: string | null; progress: number; done: boolean };
+export type ScratchCard = { id: number; status: 'new' | 'revealed'; shop: string; created_at: string; revealed_at: string | null; prize: number | null };
+export type HomeData = { me: Me; offers: Promotion[]; lastPurchase: Purchase | null; news: NewsItem[]; challenges: Challenge[] };
 export type Reward = { id: number; title: string; description: string; cost_points: number };
 export type Redemption = { id: number; reward_title: string; points: number; status: 'pending' | 'issued' | 'cancelled'; created_at: string; resolved_at: string | null };
 export type Purchase = { id: number; shop: string; total_cents: number; discount_cents: number; points_earned: number; purchased_at: string };
@@ -73,6 +75,9 @@ export const api = {
   history: () => call<{ points: number; history: HistoryItem[] }>('GET', '/api/points-history'),
   stores: () => call<{ stores: Store[] }>('GET', '/api/stores'),
   news: () => call<{ news: NewsItem[] }>('GET', '/api/news'),
+  scratch: () => call<{ cards: ScratchCard[] }>('GET', '/api/scratch'),
+  reveal: (id: number) => call<{ id: number; prize: number; points: number }>('POST', `/api/scratch/${id}/reveal`),
+  challenges: () => call<{ challenges: Challenge[] }>('GET', '/api/challenges'),
   deleteAccount: () => call<{ ok: true }>('DELETE', '/api/me'),
   promotions: () => call<{ promotions: Promotion[] }>('GET', '/api/promotions'),
   activate: (id: number) => call<{ promotions: Promotion[] }>('POST', `/api/promotions/${id}/activate`),

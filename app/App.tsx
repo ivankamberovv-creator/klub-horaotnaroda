@@ -1,6 +1,6 @@
 // Клуб „Хора от Народа“: началото на приложението. Държи входа и разделите.
 // Подредбата е като при големите приложения с карти за лоялност: начало, оферти, картата в средата, награди и „Още“.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -15,6 +15,8 @@ import { api, ApiError, HomeData, Me, setToken, setUnauthorizedHandler } from '.
 import { loadCachedMe, loadToken, saveCachedMe, saveToken } from './src/storage';
 import { Button, ErrorText, Loading, Tricolor } from './src/components/ui';
 import { Icon, IconName } from './src/components/Icon';
+import { Confetti } from './src/components/Confetti';
+import { CountUp } from './src/components/CountUp';
 import { Login } from './src/screens/Login';
 import { Home } from './src/screens/Home';
 import { Offers } from './src/screens/Offers';
@@ -42,12 +44,27 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [offline, setOffline] = useState(false);
+  // празникът: конфети и „+N точки“, когато точките са се увеличили
+  const [party, setParty] = useState({ run: 0, gain: 0 });
+  const lastPoints = useRef<number | null>(null);
 
   // профилът се помни и на устройството, за да се вижда картата и без интернет
   const setMe = useCallback((next: Me | null) => {
+    // ако точките са повече от последно видените (покупка, изпълнена мисия, талон), празнуваме
+    if (next && lastPoints.current !== null && next.points > lastPoints.current) {
+      const gain = next.points - lastPoints.current;
+      setParty((p) => ({ run: p.run + 1, gain }));
+    }
+    lastPoints.current = next ? next.points : null;
     setMeState(next);
     saveCachedMe(next);
   }, []);
+  // „+N точки“ се скрива само след малко
+  useEffect(() => {
+    if (!party.gain) return;
+    const timer = setTimeout(() => setParty((p) => ({ ...p, gain: 0 })), 3200);
+    return () => clearTimeout(timer);
+  }, [party.run, party.gain]);
 
   const signOut = useCallback(() => {
     setToken(null);
@@ -86,7 +103,7 @@ export default function App() {
       if (!saved) return setState('out');
       setToken(saved);
       const cached = await loadCachedMe<Me>();
-      if (cached) setMeState(cached);
+      if (cached) { setMeState(cached); lastPoints.current = cached.points; }
       setState('in');
       refresh();
     })();
@@ -119,7 +136,7 @@ export default function App() {
     setSection(sub);
     if (next === 'home' || next === 'card') refresh();
   };
-  const goFromHome = (to: 'offers' | 'rewards' | 'purchases' | 'news' | 'stores' | 'history') =>
+  const goFromHome = (to: 'offers' | 'rewards' | 'purchases' | 'news' | 'stores' | 'history' | 'scratch' | 'missions') =>
     (to === 'offers' || to === 'rewards' ? go(to) : go('more', to));
   const newsSeen = useCallback(() => setMeState((m) => (m && m.unreadNews ? { ...m, unreadNews: 0 } : m)), []);
 
@@ -144,7 +161,7 @@ export default function App() {
               </View>
               {me ? (
                 <View style={{ marginLeft: 'auto', alignItems: 'flex-end' }}>
-                  <Text testID="headerPoints" style={st.headerPoints}>{me.points}</Text>
+                  <CountUp testID="headerPoints" value={me.points} style={st.headerPoints} />
                   <Text style={st.headerUnit}>точки</Text>
                 </View>
               ) : null}
@@ -166,11 +183,17 @@ export default function App() {
                   {tab === 'home' && <Home me={me} home={home} refreshing={refreshing} onRefresh={() => refresh(true)} onShowCard={() => go('card')} onGo={goFromHome} />}
                   {tab === 'offers' && <Offers onChanged={refresh} />}
                   {tab === 'card' && <CardScreen me={me} offline={offline} />}
-                  {tab === 'rewards' && <Rewards onChanged={refresh} onShowCode={() => go('card')} onHistory={() => go('more', 'history')} />}
-                  {tab === 'more' && <More me={me} section={section} onSection={setSection} onMe={setMe} onNewsSeen={newsSeen} onLogout={logout} onDeleted={signOut} />}
+                  {tab === 'rewards' && <Rewards onChanged={refresh} onShowCode={() => go('card')} onHistory={() => go('more', 'history')} onParty={() => setParty((p) => ({ run: p.run + 1, gain: 0 }))} />}
+                  {tab === 'more' && <More me={me} section={section} onSection={setSection} onMe={setMe} onNewsSeen={newsSeen} onLogout={logout} onDeleted={signOut} onWon={refresh} />}
                 </>
               )}
               {me && error ? <View style={st.errorBox}><ErrorText>{error}</ErrorText></View> : null}
+              {party.gain > 0 ? (
+                <View pointerEvents="none" style={st.gainWrap}>
+                  <View testID="gainToast" accessibilityLiveRegion="polite" style={st.gain}><Text style={st.gainText}>+{party.gain} точки</Text></View>
+                </View>
+              ) : null}
+              <Confetti run={party.run} />
             </View>
 
             <View accessibilityRole="tablist" style={st.tabs}>
@@ -184,7 +207,7 @@ export default function App() {
                     ) : (
                       <View>
                         <Icon name={t.icon} color={on ? colors.greenDeep : colors.muted} />
-                        {t.id === 'more' && me && me.unreadNews > 0 ? <View testID="moreDot" style={st.dot} /> : null}
+                        {t.id === 'more' && me && (me.unreadNews > 0 || me.scratchCards > 0) ? <View testID="moreDot" style={st.dot} /> : null}
                       </View>
                     )}
                     <Text numberOfLines={1} style={[st.tabText, on && { color: colors.greenDeep, fontFamily: fonts.bold }]}>{t.label}</Text>
@@ -209,6 +232,9 @@ const st = StyleSheet.create({
   headerUnit: { fontFamily: fonts.body, fontSize: 11, color: colors.muted },
   offline: { backgroundColor: colors.ink, paddingVertical: 6, paddingHorizontal: 20 },
   offlineText: { fontFamily: fonts.semi, fontSize: 13, color: colors.white, textAlign: 'center' },
+  gainWrap: { position: 'absolute', bottom: 18, left: 0, right: 0, alignItems: 'center' },
+  gain: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 24, backgroundColor: colors.greenDeep, borderWidth: 2, borderColor: colors.white },
+  gainText: { fontFamily: fonts.bold, fontSize: 20, color: colors.white },
   errorBox: { position: 'absolute', left: 12, right: 12, bottom: 12, padding: 12, borderRadius: 4, borderWidth: 1, borderColor: colors.redText, backgroundColor: colors.bg },
   tabs: { flexDirection: 'row', alignItems: 'flex-end', borderTopWidth: 1, borderTopColor: colors.line, backgroundColor: colors.bg, paddingBottom: 4 },
   tab: { flex: 1, minHeight: 60, alignItems: 'center', justifyContent: 'flex-end', gap: 3, paddingHorizontal: 2, paddingBottom: 4 },

@@ -63,9 +63,10 @@ $('logout').addEventListener('click', leave);
 // ---- раздели ----
 function openTab(name) {
   document.querySelectorAll('nav.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
-  for (const t of ['kasa', 'promotions', 'rewards', 'stores', 'news', 'customers']) $('tab-' + t).hidden = t !== name;
+  for (const t of ['kasa', 'promotions', 'rewards', 'challenges', 'stores', 'news', 'customers']) $('tab-' + t).hidden = t !== name;
   if (name === 'promotions') loadPromotions();
   if (name === 'rewards') loadRewards();
+  if (name === 'challenges') loadChallenges();
   if (name === 'stores') loadStores();
   if (name === 'news') loadNews();
   if (name === 'customers') loadCustomers();
@@ -136,7 +137,8 @@ function demoPurchaseForm() {
       try {
         const r = await api('POST', '/api/kasa/demo-purchase', { cardCode: current.customer.cardCode, totalCents: cents(total.value), discountCents: cents(discount.value), shop: shop.value });
         current = await api('GET', '/api/kasa/customer/' + current.customer.cardCode);
-        renderCustomer(`Записана покупка за ${euro(r.purchase.total_cents)}: начислени са ${r.purchase.points_earned} точки.`);
+        const extra = [...r.completed.map((c) => `Изпълнена мисия „${c.title}“: +${c.reward_points} точки.`), r.scratchCard ? 'Клиентът получава талон за изтриване в приложението.' : ''].filter(Boolean).join(' ');
+        renderCustomer(`Записана покупка за ${euro(r.purchase.total_cents)}: начислени са ${r.purchase.points_earned} точки.${extra ? ' ' + extra : ''}`);
       } catch (error) { show(err, error.message); }
     },
   },
@@ -262,6 +264,50 @@ async function loadRewards() {
   if (!rewards.length) $('rewardRows').replaceChildren(el('tr', {}, el('td', { colspan: '3', class: 'muted' }, 'Още няма награди.')));
 }
 
+// ---- мисии ----
+const goalText = (c) => (c.kind === 'purchases' ? `${c.goal} покупки` : `покупки за ${euro(c.goal)}`);
+function challengeKindChanged() {
+  $('challengeGoalLabel').firstChild.textContent = $('challengeKind').value === 'purchases' ? 'Колко покупки' : 'Обща сума, €';
+}
+$('challengeKind').addEventListener('change', challengeKindChanged);
+function challengeFormFor(c) {
+  $('challengeId').value = c?.id ?? '';
+  $('challengeFormTitle').textContent = c ? 'Промяна на мисия' : 'Нова мисия';
+  $('challengeTitle').value = c?.title ?? '';
+  $('challengeDescription').value = c?.description ?? '';
+  $('challengeKind').value = c?.kind ?? 'purchases';
+  $('challengeGoal').value = c ? (c.kind === 'spend' ? (c.goal / 100).toFixed(2).replace('.', ',') : c.goal) : '';
+  $('challengeReward').value = c?.reward_points ?? '';
+  $('challengeStarts').value = c ? localInput(c.starts_at) : '';
+  $('challengeEnds').value = localInput(c?.ends_at);
+  $('challengeActive').checked = c ? Boolean(c.active) : true;
+  show($('challengeErr'), '');
+  challengeKindChanged();
+}
+$('challengeReset').addEventListener('click', () => challengeFormFor(null));
+$('challengeForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = $('challengeId').value, kind = $('challengeKind').value;
+  const raw = parseFloat(String($('challengeGoal').value).replace(',', '.'));
+  const body = { title: $('challengeTitle').value, description: $('challengeDescription').value, kind,
+    goal: kind === 'spend' ? Math.round(raw * 100) : raw, reward_points: Number($('challengeReward').value),
+    starts_at: $('challengeStarts').value ? new Date($('challengeStarts').value).toISOString() : null,
+    ends_at: $('challengeEnds').value ? new Date($('challengeEnds').value).toISOString() : null, active: $('challengeActive').checked };
+  try {
+    await api(id ? 'PUT' : 'POST', '/api/admin/challenges' + (id ? '/' + id : ''), body);
+    challengeFormFor(null);
+    loadChallenges();
+  } catch (err) { show($('challengeErr'), err.message); }
+});
+async function loadChallenges() {
+  const { challenges } = await api('GET', '/api/admin/challenges');
+  $('challengeRows').replaceChildren(...challenges.map((c) => el('tr', { class: c.active ? '' : 'off' },
+    el('td', {}, el('b', {}, c.title), c.active ? '' : ' (спряна)'), el('td', {}, goalText(c)), el('td', { class: 'num' }, String(c.reward_points)),
+    el('td', {}, c.ends_at ? day(c.ends_at) : 'без край'), el('td', { class: 'num' }, String(c.completions)),
+    el('td', {}, el('button', { class: 'btn ghost small', type: 'button', onclick: () => { challengeFormFor(c); $('challengeTitle').focus(); } }, 'Променете')))));
+  if (!challenges.length) $('challengeRows').replaceChildren(el('tr', {}, el('td', { colspan: '6', class: 'muted' }, 'Още няма мисии.')));
+}
+
 // ---- магазини ----
 const DAY_NAMES = ['Пон', 'Вт', 'Ср', 'Чет', 'Пет', 'Съб', 'Нед'];
 /** Седемте реда за работното време: състояние (отворено, почивен ден, не е посочено) и часове от–до */
@@ -377,6 +423,7 @@ let searchTimer = 0;
 $('customerQuery').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadCustomers, 250); });
 
 buildHoursRows();
+challengeFormFor(null);
 promoFormFor(null);
 storeFormFor(null);
 newsFormFor(null);
