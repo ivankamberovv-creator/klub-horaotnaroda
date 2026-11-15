@@ -10,6 +10,10 @@ CREATE TABLE IF NOT EXISTS customers (
   name TEXT NOT NULL DEFAULT '',
   card_code TEXT NOT NULL UNIQUE,      -- кодът, който касата сканира (EAN-13)
   kasa_id TEXT,                        -- номерът на клиента в касовата програма, когато бъде вързана
+  birthday TEXT,                       -- само месец и ден, „ММ-ДД“; годината не се пита
+  birthday_set_at TEXT,
+  favorite_store_id INTEGER,
+  news_seen_at TEXT,                   -- докога клиентът е прочел новините
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS otp_codes (
@@ -45,6 +49,7 @@ CREATE TABLE IF NOT EXISTS promotions (
   starts_at TEXT,
   ends_at TEXT,
   active INTEGER NOT NULL DEFAULT 1,
+  image_url TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS activations (
@@ -98,16 +103,67 @@ CREATE TABLE IF NOT EXISTS points_ledger (
   id INTEGER PRIMARY KEY,
   customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
   delta INTEGER NOT NULL,
-  reason TEXT NOT NULL CHECK (reason IN ('purchase','reward','reward_refund','adjustment')),
+  reason TEXT NOT NULL CHECK (reason IN ('purchase','reward','reward_refund','bonus','adjustment')),
   ref TEXT,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS points_ledger_customer ON points_ledger(customer_id);
+CREATE TABLE IF NOT EXISTS stores (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  city TEXT NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  -- работното време като JSON: „24/7“ или седем полета от понеделник до неделя: ["8:00","20:00"], null (почивен ден) или "?" (не е посочено)
+  hours TEXT NOT NULL DEFAULT '[]',
+  lat REAL,
+  lng REAL,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS news (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  image_url TEXT NOT NULL DEFAULT '',
+  published_at TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
 `;
+
+/** Довежда по-стара база до сегашния вид: добавя липсващите колони, без да пипа данните. */
+function upgrade(db) {
+  const has = (table, column) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+  const add = (table, column, type) => { if (!has(table, column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`); };
+  add('customers', 'birthday', 'TEXT');
+  add('customers', 'birthday_set_at', 'TEXT');
+  add('customers', 'favorite_store_id', 'INTEGER');
+  add('customers', 'news_seen_at', 'TEXT');
+  add('promotions', 'image_url', "TEXT NOT NULL DEFAULT ''");
+  // в първата версия книгата с точките не допускаше причина „bonus“; правилото се сменя само с нова таблица
+  const ledger = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'points_ledger'").get().sql;
+  if (!ledger.includes("'bonus'")) {
+    db.transaction(() => {
+      db.exec(`CREATE TABLE points_ledger_new (
+        id INTEGER PRIMARY KEY,
+        customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+        delta INTEGER NOT NULL,
+        reason TEXT NOT NULL CHECK (reason IN ('purchase','reward','reward_refund','bonus','adjustment')),
+        ref TEXT,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO points_ledger_new SELECT id, customer_id, delta, reason, ref, created_at FROM points_ledger;
+      DROP TABLE points_ledger;
+      ALTER TABLE points_ledger_new RENAME TO points_ledger;
+      CREATE INDEX IF NOT EXISTS points_ledger_customer ON points_ledger(customer_id);`);
+    })();
+  }
+}
 
 /** Отваря (и при нужда създава) базата. ':memory:' дава празна база за тестовете. */
 export function openDb(path = ':memory:') {
@@ -116,5 +172,6 @@ export function openDb(path = ':memory:') {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
+  upgrade(db);
   return db;
 }

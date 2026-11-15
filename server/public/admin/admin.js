@@ -63,9 +63,11 @@ $('logout').addEventListener('click', leave);
 // ---- раздели ----
 function openTab(name) {
   document.querySelectorAll('nav.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
-  for (const t of ['kasa', 'promotions', 'rewards', 'customers']) $('tab-' + t).hidden = t !== name;
+  for (const t of ['kasa', 'promotions', 'rewards', 'stores', 'news', 'customers']) $('tab-' + t).hidden = t !== name;
   if (name === 'promotions') loadPromotions();
   if (name === 'rewards') loadRewards();
+  if (name === 'stores') loadStores();
+  if (name === 'news') loadNews();
   if (name === 'customers') loadCustomers();
 }
 document.querySelectorAll('nav.tabs button').forEach((b) => b.addEventListener('click', () => openTab(b.dataset.tab)));
@@ -101,10 +103,10 @@ function renderCustomer(message = '') {
         el('div', { class: 'fit', style: 'text-align:right' }, el('p', { class: 'big' }, String(c.points)), el('p', { class: 'muted' }, 'точки'))),
       message ? el('p', { class: 'ok', role: 'status' }, message) : null),
 
-    el('div', { class: 'card' }, el('h3', {}, 'Активирани промоции'),
+    el('div', { class: 'card' }, el('h3', {}, 'Активирани оферти'),
       c.promotions.length
         ? el('div', { class: 'list' }, ...c.promotions.map((p) => el('div', {}, el('div', {}, el('b', {}, p.title), el('p', { class: 'muted' }, promoText(p))))))
-        : el('p', { class: 'muted' }, 'Клиентът не е активирал промоции.')),
+        : el('p', { class: 'muted' }, 'Клиентът не е активирал оферти.')),
 
     el('div', { class: 'card' }, el('h3', {}, 'Награди за издаване'),
       c.pendingRewards.length
@@ -144,11 +146,41 @@ function demoPurchaseForm() {
   err, el('button', { class: 'btn', type: 'submit' }, 'Запишете покупката'));
 }
 
+// ---- снимки към оферти и новини ----
+/** Връзва поле за файл с кутийка за преглед. Снимката се качва веднага и се помни адресът ѝ. */
+function imageField(prefix, errNode) {
+  let current = '';
+  const set = (url) => {
+    current = url || '';
+    $(prefix + 'Image').value = '';
+    $(prefix + 'ImageBox').hidden = !current;
+    if (current) $(prefix + 'ImagePreview').src = current;
+  };
+  $(prefix + 'Image').addEventListener('change', async () => {
+    const file = $(prefix + 'Image').files[0];
+    if (!file) return;
+    show(errNode, '');
+    try {
+      const data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Файлът не можа да се прочете.'));
+        reader.readAsDataURL(file);
+      });
+      set((await api('POST', '/api/admin/upload', { data })).url);
+    } catch (err) { set(current); show(errNode, err.message); }
+  });
+  $(prefix + 'ImageRemove').addEventListener('click', () => set(''));
+  return { set, url: () => current };
+}
+const promoImage = imageField('promo', $('promoErr'));
+const newsImage = imageField('news', $('newsErr'));
+
 // ---- промоции ----
 const localInput = (iso) => { if (!iso) return ''; const d = new Date(iso); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 function promoFormFor(p) {
   $('promoId').value = p?.id ?? '';
-  $('promoFormTitle').textContent = p ? 'Промяна на промоция' : 'Нова промоция';
+  $('promoFormTitle').textContent = p ? 'Промяна на оферта' : 'Нова оферта';
   $('promoTitle').value = p?.title ?? '';
   $('promoTag').value = p?.tag ?? '';
   $('promoDescription').value = p?.description ?? '';
@@ -158,6 +190,7 @@ function promoFormFor(p) {
   $('promoStarts').value = localInput(p?.starts_at);
   $('promoEnds').value = localInput(p?.ends_at);
   $('promoActive').checked = p ? Boolean(p.active) : true;
+  promoImage.set(p?.image_url ?? '');
   show($('promoErr'), '');
   promoKindChanged();
 }
@@ -179,6 +212,7 @@ $('promoForm').addEventListener('submit', async (e) => {
     starts_at: $('promoStarts').value ? new Date($('promoStarts').value).toISOString() : null,
     ends_at: $('promoEnds').value ? new Date($('promoEnds').value).toISOString() : null,
     active: $('promoActive').checked,
+    image_url: promoImage.url(),
   };
   try {
     await api(id ? 'PUT' : 'POST', '/api/admin/promotions' + (id ? '/' + id : ''), body);
@@ -195,7 +229,7 @@ async function loadPromotions() {
     el('td', {}, p.ends_at ? day(p.ends_at) : 'без край'),
     el('td', { class: 'num' }, String(p.activations)),
     el('td', {}, el('button', { class: 'btn ghost small', type: 'button', onclick: () => { promoFormFor(p); $('promoTitle').focus(); } }, 'Променете')))));
-  if (!promotions.length) $('promoRows').replaceChildren(el('tr', {}, el('td', { colspan: '5', class: 'muted' }, 'Още няма промоции.')));
+  if (!promotions.length) $('promoRows').replaceChildren(el('tr', {}, el('td', { colspan: '5', class: 'muted' }, 'Още няма оферти.')));
 }
 
 // ---- награди ----
@@ -228,6 +262,106 @@ async function loadRewards() {
   if (!rewards.length) $('rewardRows').replaceChildren(el('tr', {}, el('td', { colspan: '3', class: 'muted' }, 'Още няма награди.')));
 }
 
+// ---- магазини ----
+const DAY_NAMES = ['Пон', 'Вт', 'Ср', 'Чет', 'Пет', 'Съб', 'Нед'];
+/** Седемте реда за работното време: състояние (отворено, почивен ден, не е посочено) и часове от–до */
+function buildHoursRows() {
+  $('storeHours').replaceChildren(...DAY_NAMES.map((name, i) => {
+    const state = el('select', { id: `storeDay${i}`, 'aria-label': `${name}: състояние` },
+      el('option', { value: 'open' }, 'Отворено'), el('option', { value: 'closed' }, 'Почивен ден'), el('option', { value: 'unknown' }, 'Не е посочено'));
+    const from = el('input', { id: `storeFrom${i}`, type: 'time', 'aria-label': `${name}: от` });
+    const to = el('input', { id: `storeTo${i}`, type: 'time', 'aria-label': `${name}: до` });
+    state.addEventListener('change', () => { from.hidden = to.hidden = state.value !== 'open'; });
+    return el('div', { class: 'dayrow' }, el('b', {}, name), state, from, to);
+  }));
+}
+const pad = (t) => (t && t.length === 4 ? '0' + t : t || '');          // „8:00“ → „08:00“ за полето за час
+const unpad = (t) => t.replace(/^0(\d:)/, '$1');                        // „08:00“ → „8:00“, както се показва
+function setHours(hours) {
+  const always = hours === '24/7';
+  $('storeAlways').checked = always;
+  $('storeHours').hidden = always;
+  for (let i = 0; i < 7; i++) {
+    const d = Array.isArray(hours) && hours.length === 7 ? hours[i] : ['8:00', '20:00'];
+    $(`storeDay${i}`).value = d === null ? 'closed' : d === '?' ? 'unknown' : 'open';
+    $(`storeFrom${i}`).value = Array.isArray(d) ? pad(d[0]) : '08:00';
+    $(`storeTo${i}`).value = Array.isArray(d) ? pad(d[1]) : '20:00';
+    $(`storeFrom${i}`).hidden = $(`storeTo${i}`).hidden = !Array.isArray(d);
+  }
+}
+function readHours() {
+  if ($('storeAlways').checked) return '24/7';
+  return DAY_NAMES.map((_, i) => {
+    const state = $(`storeDay${i}`).value;
+    return state === 'closed' ? null : state === 'unknown' ? '?' : [unpad($(`storeFrom${i}`).value), unpad($(`storeTo${i}`).value)];
+  });
+}
+$('storeAlways').addEventListener('change', () => { $('storeHours').hidden = $('storeAlways').checked; });
+function storeFormFor(st) {
+  $('storeId').value = st?.id ?? '';
+  $('storeFormTitle').textContent = st ? 'Промяна на магазин' : 'Нов магазин';
+  $('storeName').value = st?.name ?? '';
+  $('storeCity').value = st?.city ?? '';
+  $('storeAddress').value = st?.address ?? '';
+  $('storePhone').value = st?.phone ?? '';
+  $('storeLat').value = st?.lat ?? '';
+  $('storeLng').value = st?.lng ?? '';
+  $('storeActive').checked = st ? Boolean(st.active) : true;
+  setHours(st?.hours ?? []);
+  show($('storeErr'), '');
+}
+$('storeReset').addEventListener('click', () => storeFormFor(null));
+$('storeForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = $('storeId').value;
+  const num = (v) => (v.trim() === '' ? null : Number(v.replace(',', '.')));
+  const body = { name: $('storeName').value, city: $('storeCity').value, address: $('storeAddress').value, phone: $('storePhone').value,
+    hours: readHours(), lat: num($('storeLat').value), lng: num($('storeLng').value), active: $('storeActive').checked };
+  try {
+    await api(id ? 'PUT' : 'POST', '/api/admin/stores' + (id ? '/' + id : ''), body);
+    storeFormFor(null);
+    loadStores();
+  } catch (err) { show($('storeErr'), err.message); }
+});
+async function loadStores() {
+  const { stores } = await api('GET', '/api/admin/stores');
+  $('storeRows').replaceChildren(...stores.map((st) => el('tr', { class: st.active ? '' : 'off' },
+    el('td', {}, el('b', {}, st.name), st.active ? '' : ' (скрит)'), el('td', {}, st.address), el('td', {}, st.phone),
+    el('td', {}, el('button', { class: 'btn ghost small', type: 'button', onclick: () => { storeFormFor(st); $('storeName').focus(); } }, 'Променете')))));
+  if (!stores.length) $('storeRows').replaceChildren(el('tr', {}, el('td', { colspan: '4', class: 'muted' }, 'Още няма магазини.')));
+}
+
+// ---- новини ----
+function newsFormFor(n) {
+  $('newsId').value = n?.id ?? '';
+  $('newsFormTitle').textContent = n ? 'Промяна на новина' : 'Нова новина';
+  $('newsTitle').value = n?.title ?? '';
+  $('newsBody').value = n?.body ?? '';
+  $('newsDate').value = n ? localInput(n.published_at) : '';
+  $('newsActive').checked = n ? Boolean(n.active) : true;
+  newsImage.set(n?.image_url ?? '');
+  show($('newsErr'), '');
+}
+$('newsReset').addEventListener('click', () => newsFormFor(null));
+$('newsForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = $('newsId').value;
+  const body = { title: $('newsTitle').value, body: $('newsBody').value, image_url: newsImage.url(),
+    published_at: $('newsDate').value ? new Date($('newsDate').value).toISOString() : null, active: $('newsActive').checked };
+  try {
+    await api(id ? 'PUT' : 'POST', '/api/admin/news' + (id ? '/' + id : ''), body);
+    newsFormFor(null);
+    loadNews();
+  } catch (err) { show($('newsErr'), err.message); }
+});
+async function loadNews() {
+  const { news } = await api('GET', '/api/admin/news');
+  $('newsRows').replaceChildren(...news.map((n) => el('tr', { class: n.active ? '' : 'off' },
+    el('td', {}, el('b', {}, n.title), n.active ? '' : ' (скрита)'), el('td', {}, day(n.published_at)),
+    el('td', {}, el('button', { class: 'btn ghost small', type: 'button', onclick: () => { newsFormFor(n); $('newsTitle').focus(); } }, 'Променете')))));
+  if (!news.length) $('newsRows').replaceChildren(el('tr', {}, el('td', { colspan: '3', class: 'muted' }, 'Още няма новини.')));
+}
+
 // ---- клиенти ----
 async function loadCustomers() {
   const [stats, list] = await Promise.all([api('GET', '/api/admin/stats'), api('GET', '/api/admin/customers?q=' + encodeURIComponent($('customerQuery').value))]);
@@ -242,5 +376,8 @@ async function loadCustomers() {
 let searchTimer = 0;
 $('customerQuery').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadCustomers, 250); });
 
+buildHoursRows();
 promoFormFor(null);
+storeFormFor(null);
+newsFormFor(null);
 if (session) enter();

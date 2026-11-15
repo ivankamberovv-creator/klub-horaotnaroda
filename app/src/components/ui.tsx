@@ -40,8 +40,8 @@ export function Button({ title, onPress, kind = 'primary', disabled, busy, style
   );
 }
 
-export function Card({ children, active, style }: { children: ReactNode; active?: boolean; style?: StyleProp<ViewStyle> }) {
-  return <View style={[s.card, active && { borderColor: colors.greenFlag, backgroundColor: colors.paper }, style]}>{children}</View>;
+export function Card({ children, active, style, testID }: { children: ReactNode; active?: boolean; style?: StyleProp<ViewStyle>; testID?: string }) {
+  return <View testID={testID} style={[s.card, active && { borderColor: colors.greenFlag, backgroundColor: colors.paper }, style]}>{children}</View>;
 }
 
 /** Ред „етикет … стойност“ в списък с черти */
@@ -79,5 +79,6 @@ export const s = StyleSheet.create({
   buttonText: { fontFamily: fonts.bold, fontSize: 16 },
   card: { borderWidth: 1, borderColor: colors.line, borderRadius: radius, padding: 16, gap: 12, backgroundColor: colors.white },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 16 },
-  screen: { padding: 20, gap: 18 },
+  // долният отстъп пази последния ред от кръглия бутон „Карта“
+  screen: { padding: 20, paddingBottom: 44, gap: 18 },
 });

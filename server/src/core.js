@@ -61,7 +61,7 @@ export function requestCode(db, rawPhone, ip = '') {
 }
 
 /** Проверява кода; при успех намира или създава клиента и отваря сесия. */
-export function verifyCode(db, rawPhone, code, { cardPrefix = '29', sessionDays = 180 } = {}) {
+export function verifyCode(db, rawPhone, code, { cardPrefix = '29', sessionDays = 180, welcomePoints = 0 } = {}) {
   const phone = normalizePhone(rawPhone);
   if (!phone) throw new AppError('bad_phone', 'Въведете български мобилен номер, например 0888 123 456.');
   const row = db.prepare('SELECT * FROM otp_codes WHERE phone = ?').get(phone);
@@ -80,6 +80,11 @@ export function verifyCode(db, rawPhone, code, { cardPrefix = '29', sessionDays 
       const info = db.prepare('INSERT INTO customers (phone, card_code, created_at) VALUES (?, ?, ?)')
         .run(phone, newCardCode(db, cardPrefix), nowIso());
       customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(info.lastInsertRowid);
+      // точки за добре дошли, ако са включени
+      if (welcomePoints > 0) {
+        db.prepare("INSERT INTO points_ledger (customer_id, delta, reason, ref, created_at) VALUES (?, ?, 'bonus', 'welcome', ?)")
+          .run(customer.id, welcomePoints, nowIso());
+      }
     }
     return { token: createSession(db, 'customer', customer.id, sessionDays * 24 * 60), customer, isNew };
   })();
@@ -122,6 +127,73 @@ export function setName(db, customerId, rawName) {
   return getCustomer(db, customerId);
 }
 
+/** „14.11“, „14.11.“, „14/11“ → „11-14“ (месец-ден); иначе null */
+export function parseBirthday(raw) {
+  const m = String(raw ?? '').trim().match(/^(\d{1,2})[./-](\d{1,2})\.?$/);
+  if (!m) return null;
+  const day = Number(m[1]), month = Number(m[2]);
+  const max = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  if (!max || day < 1 || day > max) return null;
+  return `${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+/** „11-14“ → „14.11“ */
+export const formatBirthday = (mmdd) => (mmdd ? `${mmdd.slice(3)}.${mmdd.slice(0, 2)}` : null);
+
+/** Рожденият ден се записва само веднъж, за да не се сменя заради точките. */
+export function setBirthday(db, customerId, raw) {
+  const c = getCustomer(db, customerId);
+  if (c.birthday) throw new AppError('birthday_set', 'Рожденият ден вече е записан. За промяна се обърнете към магазина.', 409);
+  const birthday = parseBirthday(raw);
+  if (!birthday) throw new AppError('bad_birthday', 'Напишете деня и месеца, например 14.11.');
+  db.prepare('UPDATE customers SET birthday = ?, birthday_set_at = ? WHERE id = ?').run(birthday, nowIso(), customerId);
+}
+
+export function setFavoriteStore(db, customerId, storeId) {
+  if (storeId !== null && !db.prepare('SELECT 1 FROM stores WHERE id = ? AND active = 1').get(storeId)) {
+    throw new AppError('no_store', 'Няма такъв магазин.', 404);
+  }
+  db.prepare('UPDATE customers SET favorite_store_id = ? WHERE id = ?').run(storeId, customerId);
+}
+
+/** Днешната дата в България като { year, monthDay: „ММ-ДД“ } */
+export function todayInSofia(now = new Date()) {
+  const [year, month, day] = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Sofia' }).format(now).split('-');
+  return { year, monthDay: `${month}-${day}` };
+}
+
+const BIRTHDAY_WAIT_DAYS = 30;
+/**
+ * Точки за рожден ден: веднъж в годината, на самия ден. Дават се само ако рожденият ден е записан
+ * поне 30 дни по-рано, за да не може някой да го запише „за днес“ и да вземе точките веднага.
+ */
+export function grantBirthdayBonus(db, customerId, points, now = new Date()) {
+  if (!(points > 0)) return false;
+  const c = getCustomer(db, customerId);
+  const { year, monthDay } = todayInSofia(now);
+  if (!c?.birthday || c.birthday !== monthDay) return false;
+  if (new Date(c.birthday_set_at).getTime() > now.getTime() - BIRTHDAY_WAIT_DAYS * 24 * 60 * 60 * 1000) return false;
+  const ref = `birthday-${year}`;
+  if (db.prepare("SELECT 1 FROM points_ledger WHERE customer_id = ? AND reason = 'bonus' AND ref = ?").get(customerId, ref)) return false;
+  db.prepare("INSERT INTO points_ledger (customer_id, delta, reason, ref, created_at) VALUES (?, ?, 'bonus', ?, ?)")
+    .run(customerId, points, ref, now.toISOString());
+  return true;
+}
+
+/** Историята на точките: всяко начисляване и всяко харчене, с описание за човека */
+export function pointsHistory(db, customerId, limit = 100) {
+  const rows = db.prepare(`
+    SELECT l.id, l.delta, l.reason, l.ref, l.created_at,
+           CASE WHEN l.reason = 'purchase' THEN (SELECT shop FROM purchases p WHERE p.id = CAST(l.ref AS INTEGER)) END shop,
+           CASE WHEN l.reason IN ('reward','reward_refund') THEN (SELECT reward_title FROM redemptions r WHERE r.id = CAST(l.ref AS INTEGER)) END reward
+    FROM points_ledger l WHERE l.customer_id = ? ORDER BY l.id DESC LIMIT ?`).all(customerId, limit);
+  const label = (r) => (r.reason === 'purchase' ? `Покупка${r.shop ? ': ' + r.shop : ''}`
+    : r.reason === 'reward' ? `Награда: ${r.reward ?? ''}`.trim()
+      : r.reason === 'reward_refund' ? `Върнати точки: ${r.reward ?? ''}`.trim()
+        : r.reason === 'bonus' ? (r.ref === 'welcome' ? 'Добре дошли в клуба' : String(r.ref).startsWith('birthday-') ? 'Честит рожден ден' : 'Подарък от клуба')
+          : 'Корекция от магазина');
+  return rows.map((r) => ({ id: r.id, delta: r.delta, label: label(r), at: r.created_at }));
+}
+
 /** Изтрива клиента и всичко за него (точки, покупки, сесии). Не може да се върне. */
 export const deleteCustomer = (db, customerId) => db.prepare('DELETE FROM customers WHERE id = ?').run(customerId);
 
@@ -132,7 +204,7 @@ const PROMO_VALID = `p.active = 1 AND (p.starts_at IS NULL OR p.starts_at <= @at
 /** Текущите промоции, с отметка коя е активирал клиентът */
 export function listPromotions(db, customerId, at = nowIso()) {
   return db.prepare(`
-    SELECT p.id, p.title, p.tag, p.description, p.kind, p.value, p.min_total_cents, p.ends_at,
+    SELECT p.id, p.title, p.tag, p.description, p.kind, p.value, p.min_total_cents, p.ends_at, p.image_url,
            a.activated_at IS NOT NULL AS activated
     FROM promotions p LEFT JOIN activations a ON a.promotion_id = p.id AND a.customer_id = @customerId
     WHERE ${PROMO_VALID} ORDER BY p.id DESC`).all({ customerId, at }).map((p) => ({ ...p, activated: Boolean(p.activated) }));
@@ -254,6 +326,7 @@ export function customerSummary(db, customerId, { pointsPerEuro = 1 } = {}) {
   const next = listRewards(db).find((r) => r.cost_points > points);
   return {
     id: c.id, name: c.name, phone: c.phone, cardCode: c.card_code, points, pointsPerEuro,
+    birthday: formatBirthday(c.birthday), favoriteStoreId: c.favorite_store_id ?? null, unreadNews: unreadNews(db, c),
     nextReward: next ? { title: next.title, costPoints: next.cost_points, missing: next.cost_points - points } : null,
     activePromotions: activePromotions(db, customerId).length,
     pendingRewards: db.prepare("SELECT COUNT(*) n FROM redemptions WHERE customer_id = ? AND status = 'pending'").get(customerId).n,
@@ -281,6 +354,12 @@ const isoOrNull = (v) => {
   if (Number.isNaN(d.getTime())) throw new AppError('bad_date', 'Датата не е вярна.');
   return d.toISOString();
 };
+/** Снимка: празно, качена тук (/uploads/…) или адрес с https */
+const imageUrl = (v) => {
+  const url = String(v ?? '').trim();
+  if (url && !/^\/uploads\/[a-z0-9]+\.(jpg|png|webp)$/.test(url) && !/^https:\/\/[^\s]+$/.test(url)) throw new AppError('bad_image', 'Снимката не е вярна. Качете я отново.');
+  return url.slice(0, 300);
+};
 const KIND_RANGE = { discount: [1, 90], double_points: [2, 5], bonus_points: [1, 10000], info: [0, 0] };
 
 function promotionFields(b) {
@@ -297,18 +376,18 @@ function promotionFields(b) {
   const starts = isoOrNull(b.starts_at), ends = isoOrNull(b.ends_at);
   if (starts && ends && ends <= starts) throw new AppError('bad_dates', 'Краят трябва да е след началото.');
   return { title, tag: text(b.tag, 40), description: text(b.description, 300), kind: b.kind, value, min_total_cents: minTotal,
-    starts_at: starts, ends_at: ends, active: b.active === false || b.active === 0 ? 0 : 1 };
+    starts_at: starts, ends_at: ends, active: b.active === false || b.active === 0 ? 0 : 1, image_url: imageUrl(b.image_url) };
 }
 export const adminListPromotions = (db) => db.prepare(`SELECT p.*, (SELECT COUNT(*) FROM activations a WHERE a.promotion_id = p.id) activations
   FROM promotions p ORDER BY p.id DESC`).all();
 export function adminSavePromotion(db, body, id = null) {
   const f = promotionFields(body);
   if (id === null) {
-    id = db.prepare(`INSERT INTO promotions (title, tag, description, kind, value, min_total_cents, starts_at, ends_at, active, created_at)
-      VALUES (@title, @tag, @description, @kind, @value, @min_total_cents, @starts_at, @ends_at, @active, @created_at)`).run({ ...f, created_at: nowIso() }).lastInsertRowid;
+    id = db.prepare(`INSERT INTO promotions (title, tag, description, kind, value, min_total_cents, starts_at, ends_at, active, image_url, created_at)
+      VALUES (@title, @tag, @description, @kind, @value, @min_total_cents, @starts_at, @ends_at, @active, @image_url, @created_at)`).run({ ...f, created_at: nowIso() }).lastInsertRowid;
   } else {
     const done = db.prepare(`UPDATE promotions SET title=@title, tag=@tag, description=@description, kind=@kind, value=@value,
-      min_total_cents=@min_total_cents, starts_at=@starts_at, ends_at=@ends_at, active=@active WHERE id=@id`).run({ ...f, id });
+      min_total_cents=@min_total_cents, starts_at=@starts_at, ends_at=@ends_at, active=@active, image_url=@image_url WHERE id=@id`).run({ ...f, id });
     if (!done.changes) throw new AppError('no_promotion', 'Няма такава промоция.', 404);
   }
   return db.prepare('SELECT * FROM promotions WHERE id = ?').get(id);
@@ -350,6 +429,81 @@ export const adminStats = (db) => ({
   pointsOutstanding: db.prepare('SELECT COALESCE(SUM(delta), 0) n FROM points_ledger').get().n,
   pendingRewards: db.prepare("SELECT COUNT(*) n FROM redemptions WHERE status = 'pending'").get().n,
 });
+
+// ---- магазини ----
+
+const storeOut = (s) => ({ id: s.id, name: s.name, city: s.city, address: s.address, phone: s.phone, hours: JSON.parse(s.hours),
+  lat: s.lat, lng: s.lng, ...(s.active === undefined ? {} : { active: s.active }) });
+export const listStores = (db) => db.prepare('SELECT id, name, city, address, phone, hours, lat, lng FROM stores WHERE active = 1 ORDER BY city, name').all().map(storeOut);
+export const adminListStores = (db) => db.prepare('SELECT * FROM stores ORDER BY city, name').all().map(storeOut);
+
+const HOUR = /^([01]?\d|2[0-3]):[0-5]\d$/;
+function storeFields(b) {
+  const name = text(b.name, 80);
+  if (name.length < 2) throw new AppError('bad_name', 'Напишете име на магазина.');
+  let hours = b.hours ?? [];
+  const okDay = (d) => d === null || d === '?' || (Array.isArray(d) && d.length === 2 && HOUR.test(d[0]) && HOUR.test(d[1]));
+  if (hours !== '24/7' && !(Array.isArray(hours) && (hours.length === 0 || hours.length === 7) && hours.every(okDay))) {
+    throw new AppError('bad_hours', 'Работното време не е вярно: трябват седем дни, всеки с начало и край (например 8:00 и 20:00).');
+  }
+  const coord = (v, max) => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    if (!Number.isFinite(n) || Math.abs(n) > max) throw new AppError('bad_geo', 'Координатите не са верни.');
+    return n;
+  };
+  const phone = text(b.phone, 20);
+  if (phone && !/^\+?[\d ]{6,20}$/.test(phone)) throw new AppError('bad_phone', 'Телефонът на магазина не е верен.');
+  return { name, city: text(b.city, 60), address: text(b.address, 160), phone, hours: JSON.stringify(hours),
+    lat: coord(b.lat, 90), lng: coord(b.lng, 180), active: b.active === false || b.active === 0 ? 0 : 1 };
+}
+export function adminSaveStore(db, body, id = null) {
+  const f = storeFields(body);
+  if (id === null) {
+    id = db.prepare(`INSERT INTO stores (name, city, address, phone, hours, lat, lng, active, created_at)
+      VALUES (@name, @city, @address, @phone, @hours, @lat, @lng, @active, @created_at)`).run({ ...f, created_at: nowIso() }).lastInsertRowid;
+  } else {
+    const done = db.prepare('UPDATE stores SET name=@name, city=@city, address=@address, phone=@phone, hours=@hours, lat=@lat, lng=@lng, active=@active WHERE id=@id').run({ ...f, id });
+    if (!done.changes) throw new AppError('no_store', 'Няма такъв магазин.', 404);
+  }
+  return storeOut(db.prepare('SELECT * FROM stores WHERE id = ?').get(id));
+}
+
+// ---- новини ----
+
+const NEWS_VISIBLE = 'active = 1 AND published_at <= ?';
+export const listNews = (db, limit = 30, at = nowIso()) =>
+  db.prepare(`SELECT id, title, body, image_url, published_at FROM news WHERE ${NEWS_VISIBLE} ORDER BY published_at DESC, id DESC LIMIT ?`).all(at, limit);
+/** Колко новини са излезли, откакто клиентът за последно е отварял раздела */
+export function unreadNews(db, customer, at = nowIso()) {
+  return db.prepare(`SELECT COUNT(*) n FROM news WHERE ${NEWS_VISIBLE} AND published_at > ?`).get(at, customer.news_seen_at ?? customer.created_at).n;
+}
+export const markNewsSeen = (db, customerId) => db.prepare('UPDATE customers SET news_seen_at = ? WHERE id = ?').run(nowIso(), customerId);
+export const adminListNews = (db) => db.prepare('SELECT * FROM news ORDER BY published_at DESC, id DESC').all();
+export function adminSaveNews(db, body, id = null) {
+  const title = text(body.title, 100);
+  if (title.length < 2) throw new AppError('bad_title', 'Напишете заглавие на новината.');
+  const f = { title, body: String(body.body ?? '').trim().slice(0, 2000), image_url: imageUrl(body.image_url),
+    published_at: isoOrNull(body.published_at) ?? nowIso(), active: body.active === false || body.active === 0 ? 0 : 1 };
+  if (id === null) {
+    id = db.prepare('INSERT INTO news (title, body, image_url, published_at, active, created_at) VALUES (@title, @body, @image_url, @published_at, @active, @created_at)')
+      .run({ ...f, created_at: nowIso() }).lastInsertRowid;
+  } else {
+    const done = db.prepare('UPDATE news SET title=@title, body=@body, image_url=@image_url, published_at=@published_at, active=@active WHERE id=@id').run({ ...f, id });
+    if (!done.changes) throw new AppError('no_news', 'Няма такава новина.', 404);
+  }
+  return db.prepare('SELECT * FROM news WHERE id = ?').get(id);
+}
+
+/** Началният екран на приложението с една заявка */
+export function home(db, customerId, opts = {}) {
+  return {
+    me: customerSummary(db, customerId, opts),
+    offers: listPromotions(db, customerId).slice(0, 8),
+    lastPurchase: listPurchases(db, customerId, 1)[0] ?? null,
+    news: listNews(db, 3),
+  };
+}
 
 // ---- настройки (малки стойности, които сървърът помни между пусканията) ----
 export const getSetting = (db, key, fallback = null) => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? fallback;

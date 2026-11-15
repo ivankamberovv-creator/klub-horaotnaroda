@@ -1,9 +1,11 @@
 // Пуска сървъра. Настройките идват от променливи на средата (вижте README.md).
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
 import { buildApp } from './app.js';
 import { createSms } from './sms.js';
 import { createKasa } from './connectors/index.js';
-import { seedDemo } from './seed.js';
+import { seedDemo, seedStores } from './seed.js';
 import { recordPurchase, getSetting, setSetting, nowIso } from './core.js';
 
 const env = process.env;
@@ -16,6 +18,9 @@ const config = {
   adminPassword: env.ADMIN_PASSWORD || (demo ? 'demo-admin' : ''),
   kasaPin: env.KASA_PIN || (demo ? '1234' : ''),
   pointsPerEuro: Number(env.POINTS_PER_EURO || 1),
+  // точки за добре дошли и за рожден ден; 0 ги изключва
+  welcomePoints: Number(env.WELCOME_POINTS || (demo ? 20 : 0)),
+  birthdayPoints: Number(env.BIRTHDAY_POINTS || (demo ? 50 : 0)),
   cardPrefix: env.CARD_PREFIX || '29',
   corsOrigin: env.CORS_ORIGIN || (demo ? '*' : ''),
   trustProxy: env.TRUST_PROXY === '1',
@@ -24,6 +29,9 @@ const config = {
   smsProvider: env.SMS_PROVIDER || 'demo',
   syncMinutes: Number(env.SYNC_MINUTES || 5),
 };
+// качените снимки стоят до базата; готовото приложение (уеб вариантът) се взима от app/dist
+config.uploadDir = resolve(env.UPLOAD_DIR || join(dirname(config.dbPath), 'uploads'));
+config.appDir = resolve(env.APP_DIR || fileURLToPath(new URL('../../app/dist', import.meta.url)));
 
 // Извън демото сървърът не тръгва с липсващи или слаби настройки.
 if (!demo) {
@@ -33,6 +41,7 @@ if (!demo) {
   if (config.adminPassword === config.kasaPin) problems.push('ADMIN_PASSWORD и KASA_PIN трябва да са различни');
   if (config.smsProvider === 'demo') problems.push('SMS_PROVIDER=demo не праща истински кодове; изберете доставчик или пуснете с DEMO=1');
   if (!Number.isInteger(config.pointsPerEuro) || config.pointsPerEuro < 1) problems.push('POINTS_PER_EURO трябва да е цяло число над нула');
+  for (const k of ['welcomePoints', 'birthdayPoints']) if (!Number.isInteger(config[k]) || config[k] < 0) problems.push(`${k === 'welcomePoints' ? 'WELCOME_POINTS' : 'BIRTHDAY_POINTS'} трябва да е цяло число, 0 или повече`);
   if (!/^2\d$/.test(config.cardPrefix)) problems.push('CARD_PREFIX трябва да е от 20 до 29 (вътрешни баркодове)');
   if (problems.length) {
     console.error('Сървърът не тръгва:\n- ' + problems.join('\n- '));
@@ -41,7 +50,8 @@ if (!demo) {
 }
 
 const db = openDb(config.dbPath);
-if (demo && seedDemo(db)) console.log('Демо: добавих примерни промоции и награди.');
+if (demo && seedDemo(db)) console.log('Демо: добавих примерни промоции, награди и новини.');
+if (seedStores(db)) console.log('Добавих списъка с магазините; поддържа се от управлението.');
 const sms = createSms({ provider: config.smsProvider });
 const kasa = createKasa(config);
 const app = await buildApp({ db, config, sms, kasa });

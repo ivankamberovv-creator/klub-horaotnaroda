@@ -56,3 +56,11 @@ tr:last-child td{border-bottom:0}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .off{opacity:.55}
 .login{max-width:380px;margin:8vh auto 0}
+
+.preview{display:flex;align-items:center;gap:10px}
+.preview img{width:96px;height:64px;object-fit:cover;border:1px solid var(--line);border-radius:4px}
+fieldset.hours{border:1px solid var(--line);border-radius:4px;padding:12px;display:grid;gap:10px;margin:0}
+fieldset.hours legend{font-weight:600;font-size:.9rem;padding:0 6px}
+.dayrow{display:grid;grid-template-columns:52px minmax(150px,1.4fr) 1fr 1fr;gap:8px;align-items:center;margin-bottom:6px}
+.dayrow b{font-size:.9rem}
+@media (max-width:520px){.dayrow{grid-template-columns:44px 1fr}.dayrow input{grid-column:2}}

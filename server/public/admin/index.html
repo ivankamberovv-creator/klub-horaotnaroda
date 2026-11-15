@@ -27,8 +27,10 @@
   <main class="wrap">
     <nav class="tabs" role="tablist" aria-label="Раздели">
       <button role="tab" data-tab="kasa" aria-selected="true">Каса</button>
-      <button role="tab" data-tab="promotions" data-admin aria-selected="false">Промоции</button>
+      <button role="tab" data-tab="promotions" data-admin aria-selected="false">Оферти</button>
       <button role="tab" data-tab="rewards" data-admin aria-selected="false">Награди</button>
+      <button role="tab" data-tab="stores" data-admin aria-selected="false">Магазини</button>
+      <button role="tab" data-tab="news" data-admin aria-selected="false">Новини</button>
       <button role="tab" data-tab="customers" data-admin aria-selected="false">Клиенти</button>
     </nav>
 
@@ -47,7 +49,7 @@
 
     <section id="tab-promotions" class="stack" hidden>
       <form class="card paper" id="promoForm">
-        <h2 id="promoFormTitle">Нова промоция</h2>
+        <h2 id="promoFormTitle">Нова оферта</h2>
         <input type="hidden" id="promoId">
         <div class="row">
           <label>Заглавие<input id="promoTitle" maxlength="80" required></label>
@@ -69,10 +71,14 @@
           <label>Край (по желание)<input id="promoEnds" type="datetime-local"></label>
           <label class="fit" style="align-self:center"><span><input id="promoActive" type="checkbox" checked style="width:auto;min-height:0"> Активна</span></label>
         </div>
+        <div class="row">
+          <label>Снимка (по желание; JPEG, PNG или WebP до 2 MB)<input id="promoImage" type="file" accept="image/jpeg,image/png,image/webp"></label>
+          <div class="fit preview" id="promoImageBox" hidden><img id="promoImagePreview" alt=""><button class="btn ghost small" type="button" id="promoImageRemove">Махнете снимката</button></div>
+        </div>
         <p class="err" id="promoErr" role="alert" hidden></p>
         <div class="row"><button class="btn fit" type="submit">Запазете</button><button class="btn ghost fit" type="button" id="promoReset">Изчистете</button></div>
       </form>
-      <div class="tablewrap"><table><thead><tr><th>Промоция</th><th>Вид</th><th>До</th><th class="num">Активирали</th><th></th></tr></thead><tbody id="promoRows"></tbody></table></div>
+      <div class="tablewrap"><table><thead><tr><th>Оферта</th><th>Вид</th><th>До</th><th class="num">Активирали</th><th></th></tr></thead><tbody id="promoRows"></tbody></table></div>
     </section>
 
     <section id="tab-rewards" class="stack" hidden>
@@ -89,6 +95,55 @@
         <div class="row"><button class="btn fit" type="submit">Запазете</button><button class="btn ghost fit" type="button" id="rewardReset">Изчистете</button></div>
       </form>
       <div class="tablewrap"><table><thead><tr><th>Награда</th><th class="num">Точки</th><th></th></tr></thead><tbody id="rewardRows"></tbody></table></div>
+    </section>
+
+    <section id="tab-stores" class="stack" hidden>
+      <form class="card paper" id="storeForm">
+        <h2 id="storeFormTitle">Нов магазин</h2>
+        <input type="hidden" id="storeId">
+        <div class="row">
+          <label>Име (град и място)<input id="storeName" maxlength="80" placeholder="Варна, Трошево" required></label>
+          <label>Град<input id="storeCity" maxlength="60"></label>
+        </div>
+        <div class="row">
+          <label>Адрес<input id="storeAddress" maxlength="160"></label>
+          <label>Телефон<input id="storePhone" maxlength="20" placeholder="+359888123456" inputmode="tel"></label>
+        </div>
+        <fieldset class="hours">
+          <legend>Работно време</legend>
+          <label><span><input id="storeAlways" type="checkbox" style="width:auto;min-height:0"> Денонощно</span></label>
+          <div id="storeHours"></div>
+        </fieldset>
+        <div class="row">
+          <label>Ширина (по желание)<input id="storeLat" inputmode="decimal" placeholder="43.2259"></label>
+          <label>Дължина (по желание)<input id="storeLng" inputmode="decimal" placeholder="27.8832"></label>
+          <label class="fit" style="align-self:center"><span><input id="storeActive" type="checkbox" checked style="width:auto;min-height:0"> Показва се</span></label>
+        </div>
+        <p class="muted">С координатите „Упътване“ води точно до входа; без тях търси по адреса.</p>
+        <p class="err" id="storeErr" role="alert" hidden></p>
+        <div class="row"><button class="btn fit" type="submit">Запазете</button><button class="btn ghost fit" type="button" id="storeReset">Изчистете</button></div>
+      </form>
+      <div class="tablewrap"><table><thead><tr><th>Магазин</th><th>Адрес</th><th>Телефон</th><th></th></tr></thead><tbody id="storeRows"></tbody></table></div>
+    </section>
+
+    <section id="tab-news" class="stack" hidden>
+      <form class="card paper" id="newsForm">
+        <h2 id="newsFormTitle">Нова новина</h2>
+        <input type="hidden" id="newsId">
+        <label>Заглавие<input id="newsTitle" maxlength="100" required></label>
+        <label>Текст<textarea id="newsBody" maxlength="2000" style="min-height:120px"></textarea></label>
+        <div class="row">
+          <label>Снимка (по желание; JPEG, PNG или WebP до 2 MB)<input id="newsImage" type="file" accept="image/jpeg,image/png,image/webp"></label>
+          <div class="fit preview" id="newsImageBox" hidden><img id="newsImagePreview" alt=""><button class="btn ghost small" type="button" id="newsImageRemove">Махнете снимката</button></div>
+        </div>
+        <div class="row">
+          <label>Да излезе на (празно = веднага)<input id="newsDate" type="datetime-local"></label>
+          <label class="fit" style="align-self:center"><span><input id="newsActive" type="checkbox" checked style="width:auto;min-height:0"> Показва се</span></label>
+        </div>
+        <p class="err" id="newsErr" role="alert" hidden></p>
+        <div class="row"><button class="btn fit" type="submit">Запазете</button><button class="btn ghost fit" type="button" id="newsReset">Изчистете</button></div>
+      </form>
+      <div class="tablewrap"><table><thead><tr><th>Новина</th><th>Излиза</th><th></th></tr></thead><tbody id="newsRows"></tbody></table></div>
     </section>
 
     <section id="tab-customers" class="stack" hidden>

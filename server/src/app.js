@@ -3,6 +3,9 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { saveImage } from './uploads.js';
 import * as core from './core.js';
 
 const { AppError } = core;
@@ -18,7 +21,19 @@ export async function buildApp({ db, config, sms, kasa }) {
   if (config.corsOrigin) {
     await app.register(cors, { origin: config.corsOrigin === '*' ? true : config.corsOrigin.split(','), methods: ['GET', 'POST', 'PUT', 'DELETE'] });
   }
-  await app.register(fastifyStatic, { root: fileURLToPath(new URL('../public', import.meta.url)), redirect: true });
+  // Какво се сервира: страницата за служители на /admin/, качените снимки на /uploads/, а на / самото приложение
+  // (готовият му уеб вариант в config.appDir). Ако още не е построено, на / стои кратка страница.
+  const publicDir = fileURLToPath(new URL('../public', import.meta.url));
+  await app.register(fastifyStatic, { root: join(publicDir, 'admin'), prefix: '/admin/', redirect: true });
+  if (config.uploadDir) {
+    await app.register(fastifyStatic, { root: config.uploadDir, prefix: '/uploads/', decorateReply: false, maxAge: '30d', immutable: true });
+  }
+  const appBuilt = Boolean(config.appDir) && existsSync(join(config.appDir, 'index.html'));
+  await app.register(fastifyStatic, {
+    root: appBuilt ? config.appDir : publicDir, prefix: '/', decorateReply: false,
+    // страницата и работникът за работа без интернет не се пазят от браузъра, за да идват новите версии веднага
+    setHeaders: (reply, path) => { if (/(index\.html|sw\.js|manifest\.json)$/.test(path)) reply.header('cache-control', 'no-cache'); },
+  });
 
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof AppError) return reply.code(err.status).send({ error: err.code, message: err.message });
@@ -43,6 +58,11 @@ export async function buildApp({ db, config, sms, kasa }) {
     req.role = s.role;
   };
   const opts = { pointsPerEuro: config.pointsPerEuro };
+  /** Профилът на клиента; пътьом дава точките за рожден ден, ако днес му е денят */
+  const me = (customerId) => {
+    core.grantBirthdayBonus(db, customerId, config.birthdayPoints ?? 0);
+    return core.customerSummary(db, customerId, opts);
+  };
 
   app.get('/api/health', async () => ({ ok: true, demo: Boolean(config.demo), kasa: kasa.name }));
 
@@ -54,7 +74,7 @@ export async function buildApp({ db, config, sms, kasa }) {
     return config.demo ? { sent: true, demoCode: code } : { sent: true };
   });
   app.post('/api/auth/verify', async (req) => {
-    const { token, customer, isNew } = core.verifyCode(db, req.body?.phone, req.body?.code, { cardPrefix: config.cardPrefix });
+    const { token, customer, isNew } = core.verifyCode(db, req.body?.phone, req.body?.code, { cardPrefix: config.cardPrefix, welcomePoints: config.welcomePoints ?? 0 });
     return { token, isNew, me: core.customerSummary(db, customer.id, opts) };
   });
   app.post('/api/auth/logout', { preHandler: customerOnly }, async (req) => {
@@ -63,9 +83,17 @@ export async function buildApp({ db, config, sms, kasa }) {
   });
 
   // ---- приложението ----
-  app.get('/api/me', { preHandler: customerOnly }, async (req) => core.customerSummary(db, req.customerId, opts));
+  app.get('/api/me', { preHandler: customerOnly }, async (req) => me(req.customerId));
+  app.get('/api/home', { preHandler: customerOnly }, async (req) => {
+    core.grantBirthdayBonus(db, req.customerId, config.birthdayPoints ?? 0);
+    return core.home(db, req.customerId, opts);
+  });
   app.put('/api/me', { preHandler: customerOnly }, async (req) => {
-    core.setName(db, req.customerId, req.body?.name);
+    // сменя се само това, което е пратено: име, рожден ден (само веднъж) или любим магазин
+    const b = req.body || {};
+    if (b.name !== undefined) core.setName(db, req.customerId, b.name);
+    if (b.birthday !== undefined) core.setBirthday(db, req.customerId, b.birthday);
+    if (b.favoriteStoreId !== undefined) core.setFavoriteStore(db, req.customerId, b.favoriteStoreId === null ? null : id(b.favoriteStoreId));
     return core.customerSummary(db, req.customerId, opts);
   });
   app.delete('/api/me', { preHandler: customerOnly }, async (req) => {
@@ -95,6 +123,14 @@ export async function buildApp({ db, config, sms, kasa }) {
     totals: core.purchaseTotals(db, req.customerId), purchases: core.listPurchases(db, req.customerId),
   }));
   app.get('/api/purchases/:id', { preHandler: customerOnly }, async (req) => core.getPurchase(db, req.customerId, id(req.params.id)));
+
+  app.get('/api/points-history', { preHandler: customerOnly }, async (req) => ({ points: core.balance(db, req.customerId), history: core.pointsHistory(db, req.customerId) }));
+  app.get('/api/stores', { preHandler: customerOnly }, async () => ({ stores: core.listStores(db) }));
+  app.get('/api/news', { preHandler: customerOnly }, async (req) => {
+    const news = core.listNews(db);
+    core.markNewsSeen(db, req.customerId); // отварянето на раздела брои новините за прочетени
+    return { news };
+  });
 
   // ---- служители: каса и управление ----
   app.post('/api/staff/login', async (req) => core.staffLogin(db, req.body?.password, config));
@@ -128,6 +164,17 @@ export async function buildApp({ db, config, sms, kasa }) {
   app.get('/api/admin/rewards', admin, async () => ({ rewards: core.adminListRewards(db) }));
   app.post('/api/admin/rewards', admin, async (req) => core.adminSaveReward(db, req.body || {}));
   app.put('/api/admin/rewards/:id', admin, async (req) => core.adminSaveReward(db, req.body || {}, id(req.params.id)));
+  app.get('/api/admin/stores', admin, async () => ({ stores: core.adminListStores(db) }));
+  app.post('/api/admin/stores', admin, async (req) => core.adminSaveStore(db, req.body || {}));
+  app.put('/api/admin/stores/:id', admin, async (req) => core.adminSaveStore(db, req.body || {}, id(req.params.id)));
+  app.get('/api/admin/news', admin, async () => ({ news: core.adminListNews(db) }));
+  app.post('/api/admin/news', admin, async (req) => core.adminSaveNews(db, req.body || {}));
+  app.put('/api/admin/news/:id', admin, async (req) => core.adminSaveNews(db, req.body || {}, id(req.params.id)));
+  // снимка за оферта или новина, пратена като base64; ограничението е по-голямо само за този път
+  app.post('/api/admin/upload', { ...admin, bodyLimit: 3 * 1024 * 1024 }, async (req) => {
+    if (!config.uploadDir) throw new AppError('no_uploads', 'Качването на снимки не е настроено.', 500);
+    return { url: saveImage(config.uploadDir, req.body?.data) };
+  });
   app.get('/api/admin/customers', admin, async (req) => ({ customers: core.adminListCustomers(db, req.query?.q || '') }));
 
   return app;

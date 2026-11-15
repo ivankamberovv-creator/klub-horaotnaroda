@@ -6,7 +6,7 @@ import { Button, Card, ErrorText, H1, H2, Loading, P, s } from '../components/ui
 import { useLoad } from '../useLoad';
 import { colors, day, fonts, pointsWord, radius } from '../theme';
 
-export function Rewards({ onChanged, onShowCode }: { onChanged: () => void; onShowCode: () => void }) {
+export function Rewards({ onChanged, onShowCode, onHistory }: { onChanged: () => void; onShowCode: () => void; onHistory: () => void }) {
   const { data, setData, error, setError, refreshing, refresh } = useLoad(() => api.rewards());
   const [confirmId, setConfirmId] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -35,6 +35,7 @@ export function Rewards({ onChanged, onShowCode }: { onChanged: () => void; onSh
       </View>
       <ErrorText>{error}</ErrorText>
       {!data && !error ? <Loading /> : null}
+      {data ? <Button testID="toHistory" title="История на точките" kind="ghost" onPress={onHistory} style={{ minHeight: 44 }} /> : null}
 
       {pending.length > 0 ? (
         <Card active>
@@ -45,7 +46,7 @@ export function Rewards({ onChanged, onShowCode }: { onChanged: () => void; onSh
               <P muted style={{ fontSize: 14 }}>Заявена на {day(x.created_at)} срещу {x.points} точки</P>
             </View>
           ))}
-          <Button title="Към моя код" kind="ghost" onPress={onShowCode} />
+          <Button title="Покажете картата" kind="ghost" onPress={onShowCode} />
         </Card>
       ) : null}
 
