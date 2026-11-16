@@ -27,6 +27,9 @@ const config = {
   // точки за добре дошли и за рожден ден; 0 ги изключва
   welcomePoints: Number(env.WELCOME_POINTS || (demo ? 20 : 0)),
   birthdayPoints: Number(env.BIRTHDAY_POINTS || (demo ? 50 : 0)),
+  // „Доведи приятел“: точки и за двамата с първата покупка на поканения, ако тя е поне REFERRAL_MIN_EURO; 0 изключва поканите
+  referralPoints: Number(env.REFERRAL_POINTS || (demo ? 50 : 0)),
+  referralMinCents: Math.round(Number(env.REFERRAL_MIN_EURO || 10) * 100),
   // талони за изтриване: от каква покупка нагоре се дават и какво може да се падне („точки:тежест“); без награди няма талони
   scratch: { minCents: Math.round(Number(env.SCRATCH_MIN_EURO || (demo ? 5 : 0)) * 100), prizes: parsePrizes(env.SCRATCH_PRIZES ?? (demo ? '5:55,10:30,20:12,50:3' : '')) },
   cardPrefix: env.CARD_PREFIX || '29',
@@ -95,7 +98,7 @@ async function sync() {
     const started = nowIso();
     const sales = await kasa.fetchSales(since);
     let added = 0;
-    for (const s of sales) if (recordPurchase(db, { ...s, source: kasa.name }, { pointsPerEuro: config.pointsPerEuro, scratch: config.scratch, welcomePoints: config.welcomePoints }).duplicate === false) added++;
+    for (const s of sales) if (recordPurchase(db, { ...s, source: kasa.name }, { pointsPerEuro: config.pointsPerEuro, scratch: config.scratch, welcomePoints: config.welcomePoints, referralPoints: config.referralPoints, referralMinCents: config.referralMinCents }).duplicate === false) added++;
     setSetting(db, 'sales_cursor', started);
     if (added) console.log(`Каса ${kasa.name}: ${added} нови покупки.`);
   } catch (err) {

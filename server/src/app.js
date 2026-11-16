@@ -57,7 +57,8 @@ export async function buildApp({ db, config, mail, kasa, weather = { at: async (
     if (!s || !roles.includes(s.role)) throw new AppError('unauthorized', 'Влезте отново.', 401);
     req.role = s.role;
   };
-  const opts = { pointsPerEuro: config.pointsPerEuro, scratch: config.scratch ?? null, welcomePoints: config.welcomePoints ?? 0 };
+  const opts = { pointsPerEuro: config.pointsPerEuro, scratch: config.scratch ?? null, welcomePoints: config.welcomePoints ?? 0,
+    referralPoints: config.referralPoints ?? 0, referralMinCents: config.referralMinCents ?? 0 };
   /** Профилът на клиента; пътьом дава точките за рожден ден, ако днес му е денят */
   const me = (customerId) => {
     core.grantBirthdayBonus(db, customerId, config.birthdayPoints ?? 0);
@@ -87,6 +88,10 @@ export async function buildApp({ db, config, mail, kasa, weather = { at: async (
     core.dropSession(db, tokenOf(req));
     return { ok: true };
   });
+
+  // ---- покани ----
+  app.get('/api/invite', { preHandler: customerOnly }, async (req) => core.inviteInfo(db, req.customerId, opts));
+  app.post('/api/invite', { preHandler: customerOnly }, async (req) => core.acceptInvite(db, req.customerId, req.body?.code, opts));
 
   // времето при клиента: около любимия му магазин, иначе в града с най-много магазини
   const weatherFor = async (customerId) => {

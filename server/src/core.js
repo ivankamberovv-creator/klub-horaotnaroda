@@ -36,6 +36,53 @@ export function newCardCode(db, prefix = '29') {
   }
 }
 
+// ---- покани: „Доведи приятел“ ----
+// Всеки клиент има код от седем цифри. Нов клиент го въвежда преди първата си покупка; когато я направи
+// (и тя е поне referralMinCents), и двамата получават referralPoints точки. Точките идват с покупка, а не
+// със записване, по същата причина като подаръка за добре дошли: нов имейл се прави за минута.
+
+function newInviteCode(db) {
+  for (;;) {
+    const code = String(randomInt(1_000_000, 10_000_000));
+    if (!db.prepare('SELECT 1 FROM customers WHERE invite_code = ?').get(code)) return code;
+  }
+}
+
+/** Кодът на клиента, колко приятели е довел и може ли самият той още да въведе код на приятел */
+export function inviteInfo(db, customerId, { referralPoints = 0, referralMinCents = 0 } = {}) {
+  let c = getCustomer(db, customerId);
+  if (!c) throw new AppError('no_customer', 'Няма такъв клиент.', 404);
+  if (!c.invite_code) { // клиенти отпреди поканите получават кода си при първото отваряне
+    db.prepare('UPDATE customers SET invite_code = ? WHERE id = ?').run(newInviteCode(db), customerId);
+    c = getCustomer(db, customerId);
+  }
+  const count = (extra) => db.prepare(`SELECT COUNT(*) n FROM customers WHERE referred_by = ? ${extra}`).get(customerId).n;
+  const inviter = c.referred_by ? db.prepare('SELECT name FROM customers WHERE id = ?').get(c.referred_by) : null;
+  return {
+    enabled: referralPoints > 0, code: c.invite_code, points: referralPoints, minCents: referralMinCents,
+    joined: count(''), rewarded: count('AND referral_rewarded_at IS NOT NULL'),
+    invitedBy: inviter ? inviter.name || 'приятел' : null,
+    waiting: Boolean(c.referred_by) && !c.referral_rewarded_at, // въвел е код и подаръкът чака първата му покупка
+    canEnter: referralPoints > 0 && !c.referred_by && !db.prepare('SELECT 1 FROM purchases WHERE customer_id = ?').get(customerId),
+  };
+}
+
+/** Клиентът въвежда кода на приятеля, който го е поканил: веднъж и само преди първата си покупка */
+export function acceptInvite(db, customerId, rawCode, opts = {}) {
+  if (!(opts.referralPoints > 0)) throw new AppError('invite_off', 'В момента няма подарък за покана.', 409);
+  const code = String(rawCode ?? '').replace(/\D/g, '');
+  const c = getCustomer(db, customerId);
+  if (!c) throw new AppError('no_customer', 'Няма такъв клиент.', 404);
+  if (c.referred_by) throw new AppError('invite_used', 'Вече сте въвели код за покана.', 409);
+  if (db.prepare('SELECT 1 FROM purchases WHERE customer_id = ?').get(customerId)) throw new AppError('invite_late', 'Код за покана се въвежда преди първата покупка.', 409);
+  const inviter = code.length === 7 ? db.prepare('SELECT id, referred_by FROM customers WHERE invite_code = ?').get(code) : null;
+  if (!inviter) throw new AppError('bad_invite', 'Няма такъв код за покана. Проверете цифрите.');
+  if (inviter.id === customerId) throw new AppError('own_invite', 'Това е Вашият код. Въведете кода на приятеля, който Ви е поканил.');
+  if (inviter.referred_by === customerId) throw new AppError('mutual_invite', 'Този приятел е поканен от Вас, затова не може и той да Ви покани.');
+  db.prepare('UPDATE customers SET referred_by = ? WHERE id = ?').run(inviter.id, customerId);
+  return inviteInfo(db, customerId, opts);
+}
+
 // ---- вход с имейл и еднократен код ----
 
 const OTP_MINUTES = 10, OTP_MAX_ATTEMPTS = 5, OTP_PER_EMAIL = 3, OTP_PER_IP = 10, OTP_WINDOW_MIN = 15;
@@ -78,8 +125,8 @@ export function verifyCode(db, rawEmail, code, { cardPrefix = '29', sessionDays 
     let customer = db.prepare('SELECT * FROM customers WHERE email = ?').get(email);
     const isNew = !customer;
     if (isNew) {
-      const info = db.prepare('INSERT INTO customers (email, card_code, created_at) VALUES (?, ?, ?)')
-        .run(email, newCardCode(db, cardPrefix), nowIso());
+      const info = db.prepare('INSERT INTO customers (email, card_code, invite_code, created_at) VALUES (?, ?, ?, ?)')
+        .run(email, newCardCode(db, cardPrefix), newInviteCode(db), nowIso());
       customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(info.lastInsertRowid);
     }
     return { token: createSession(db, 'customer', customer.id, sessionDays * 24 * 60), customer, isNew };
@@ -187,6 +234,7 @@ export function pointsHistory(db, customerId, limit = 100) {
     : r.reason === 'reward' ? `Награда: ${r.reward ?? ''}`.trim()
       : r.reason === 'reward_refund' ? `Върнати точки: ${r.reward ?? ''}`.trim()
         : r.reason === 'bonus' ? (r.ref === 'welcome' ? 'Добре дошли в клуба' : String(r.ref).startsWith('birthday-') ? 'Честит рожден ден'
+          : r.ref === 'referred' ? 'Подарък за покана от приятел' : String(r.ref).startsWith('referral-') ? 'Поканен от Вас приятел пазарува'
           : String(r.ref).startsWith('scratch-') ? 'Талон за изтриване' : String(r.ref).startsWith('challenge-') ? `Изпълнена мисия${r.challenge ? ': ' + r.challenge : ''}` : 'Подарък от клуба')
           : 'Корекция от магазина');
   return rows.map((r) => ({ id: r.id, delta: r.delta, label: label(r), at: r.created_at }));
@@ -295,7 +343,7 @@ export function pointsFor(db, customerId, totalCents, at, pointsPerEuro = 1) {
  * Записва покупка, дошла от касата, и начислява точките. Втори запис на същия документ не прави нищо.
  * p: { source, externalId, cardCode | customerId, shop, totalCents, discountCents, purchasedAt, items: [{ name, quantity, totalCents }] }
  */
-export function recordPurchase(db, p, { pointsPerEuro = 1, scratch = null, welcomePoints = 0 } = {}) {
+export function recordPurchase(db, p, { pointsPerEuro = 1, scratch = null, welcomePoints = 0, referralPoints = 0, referralMinCents = 0 } = {}) {
   return db.transaction(() => {
     const customer = p.customerId ? getCustomer(db, p.customerId) : getCustomerByCard(db, p.cardCode);
     if (!customer) return { skipped: 'unknown_customer' };
@@ -317,10 +365,19 @@ export function recordPurchase(db, p, { pointsPerEuro = 1, scratch = null, welco
       db.prepare("INSERT INTO points_ledger (customer_id, delta, reason, ref, created_at) VALUES (?, ?, 'bonus', 'welcome', ?)")
         .run(customer.id, welcomePoints, nowIso());
     }
+    // поканен от приятел: с първата достатъчно голяма покупка точки получават и двамата, веднъж
+    let referral = null;
+    if (referralPoints > 0 && customer.referred_by && !customer.referral_rewarded_at && p.totalCents >= referralMinCents) {
+      const give = db.prepare("INSERT INTO points_ledger (customer_id, delta, reason, ref, created_at) VALUES (?, ?, 'bonus', ?, ?)");
+      give.run(customer.id, referralPoints, 'referred', nowIso());
+      give.run(customer.referred_by, referralPoints, `referral-${customer.id}`, nowIso());
+      db.prepare('UPDATE customers SET referral_rewarded_at = ? WHERE id = ?').run(nowIso(), customer.id);
+      referral = { inviterId: customer.referred_by, friendName: customer.name, points: referralPoints };
+    }
     // забавната част: талон за изтриване и напредък по мисиите
     const scratchCard = createScratchCard(db, customer.id, id, p.totalCents, scratch);
     const completed = completeChallenges(db, customer.id, at);
-    return { purchase: db.prepare('SELECT * FROM purchases WHERE id = ?').get(id), duplicate: false, scratchCard, completed };
+    return { purchase: db.prepare('SELECT * FROM purchases WHERE id = ?').get(id), duplicate: false, scratchCard, completed, referral };
   })();
 }
 
@@ -454,12 +511,14 @@ export function adminSaveChallenge(db, body, id = null) {
 // ---- обобщение за приложението и за касата ----
 
 /** Всичко за началния екран на приложението */
-export function customerSummary(db, customerId, { pointsPerEuro = 1, welcomePoints = 0 } = {}) {
+export function customerSummary(db, customerId, { pointsPerEuro = 1, welcomePoints = 0, referralPoints = 0 } = {}) {
   const c = getCustomer(db, customerId);
   const points = balance(db, customerId);
   const next = listRewards(db).find((r) => r.cost_points > points);
   return {
     id: c.id, name: c.name, email: c.email, cardCode: c.card_code, points, pointsPerEuro,
+    // колко точки носи една покана (и на двамата); 0, ако поканите са изключени
+    referralPoints,
     // подаръкът за добре дошли, който още чака първата покупка; 0, ако няма такъв или вече е даден
     welcomePoints: welcomePoints > 0 && !db.prepare("SELECT 1 FROM points_ledger WHERE customer_id = ? AND reason = 'bonus' AND ref = 'welcome'").get(customerId) ? welcomePoints : 0,
     birthday: formatBirthday(c.birthday), favoriteStoreId: c.favorite_store_id ?? null, unreadNews: unreadNews(db, c),

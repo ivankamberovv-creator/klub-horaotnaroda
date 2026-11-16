@@ -16,6 +16,9 @@ const customersTable = (name) => `CREATE TABLE IF NOT EXISTS ${name} (
   birthday_set_at TEXT,
   favorite_store_id INTEGER,
   news_seen_at TEXT,                   -- докога клиентът е прочел новините
+  invite_code TEXT,                    -- кодът, с който кани приятели (седем цифри)
+  referred_by INTEGER REFERENCES customers(id) ON DELETE SET NULL,  -- кой го е поканил
+  referral_rewarded_at TEXT,           -- кога двамата са получили точките за поканата; празно, докато чакат първата покупка
   created_at TEXT NOT NULL
 );`;
 
@@ -238,6 +241,10 @@ function upgrade(db) {
   add('promotions', 'image_url', "TEXT NOT NULL DEFAULT ''");
   add('promotions', 'weather', "TEXT NOT NULL DEFAULT ''");
   if (!has(db, 'customers', 'email')) customersToEmail(db);
+  add('customers', 'invite_code', 'TEXT');
+  add('customers', 'referred_by', 'INTEGER REFERENCES customers(id) ON DELETE SET NULL');
+  add('customers', 'referral_rewarded_at', 'TEXT');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS customers_invite_code ON customers(invite_code)');
   // в първата версия книгата с точките не допускаше причина „bonus“; правилото се сменя само с нова таблица
   const ledger = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'points_ledger'").get().sql;
   if (!ledger.includes("'bonus'")) {
