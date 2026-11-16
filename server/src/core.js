@@ -43,7 +43,7 @@ export function newCardCode(db, prefix = '29') {
 
 function newInviteCode(db) {
   for (;;) {
-    const code = String(randomInt(1_000_000, 10_000_000));
+    const code = String(crypto.randomInt(1_000_000, 10_000_000));
     if (!db.prepare('SELECT 1 FROM customers WHERE invite_code = ?').get(code)) return code;
   }
 }
