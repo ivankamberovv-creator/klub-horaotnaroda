@@ -9,6 +9,7 @@ import { createWeather, WEATHER_KINDS } from './weather.js';
 import { createKasa } from './connectors/index.js';
 import { seedDemo, seedDemoMissions, seedDemoWeather, seedStores } from './seed.js';
 import { recordPurchase, getSetting, setSetting, nowIso, parsePrizes } from './core.js';
+import { createSource, listSources, parseSkuList, ENV_RE } from './loyalty.js';
 
 const env = process.env;
 // демото се пуска с DEMO=1 или с --demo (второто работи еднакво на Windows, macOS и Linux)
@@ -33,6 +34,14 @@ const config = {
   corsOrigin: env.CORS_ORIGIN || (demo ? '*' : ''),
   trustProxy: env.TRUST_PROXY === '1',
   kasa: env.KASA || 'demo',
+  // ---- Vamibex POS ----
+  // средата, с която работи приложението: демото е пробната среда на касата (simulation), истинският сървър е production
+  environment: env.LOYALTY_ENVIRONMENT || (demo ? 'simulation' : 'production'),
+  retailerCode: env.RETAILER_CODE || 'HORA',
+  // кои артикули не носят точки („ALC-*,TOB-01“) и от каква покупка нагоре се дават точки
+  earn: { excludedSkus: parseSkuList(env.POINTS_EXCLUDED_SKUS), minTotalCents: Math.round(Number(env.POINTS_MIN_TOTAL_EURO || 0) * 100) },
+  // колко минути важи резервирана награда, преди плащането да е започнало
+  holdMinutes: Number(env.REDEMPTION_HOLD_MINUTES || 15),
   yanak: { baseUrl: env.YANAK_URL || undefined, email: env.YANAK_EMAIL, username: env.YANAK_USERNAME },
   // времето навън: off, live (MET Norway; иска WEATHER_CONTACT), demo (сменя се през две минути) или sun, clouds, rain, fog, snow
   weather: { mode: env.WEATHER || (demo ? 'demo' : 'off'), contact: env.WEATHER_CONTACT || '' },
@@ -62,6 +71,10 @@ if (!demo) {
   if (!Number.isInteger(config.pointsPerEuro) || config.pointsPerEuro < 1) problems.push('POINTS_PER_EURO трябва да е цяло число над нула');
   for (const k of ['welcomePoints', 'birthdayPoints']) if (!Number.isInteger(config[k]) || config[k] < 0) problems.push(`${k === 'welcomePoints' ? 'WELCOME_POINTS' : 'BIRTHDAY_POINTS'} трябва да е цяло число, 0 или повече`);
   if (!/^2\d$/.test(config.cardPrefix)) problems.push('CARD_PREFIX трябва да е от 20 до 29 (вътрешни баркодове)');
+  if (!ENV_RE.test(config.environment)) problems.push('LOYALTY_ENVIRONMENT трябва да е име на среда с малки латински букви, например production');
+  if (!/^[A-Za-z0-9_.-]{1,64}$/.test(config.retailerCode)) problems.push('RETAILER_CODE трябва да е кодът на търговеца в касата, например HORA');
+  if (!Number.isInteger(config.earn.minTotalCents) || config.earn.minTotalCents < 0) problems.push('POINTS_MIN_TOTAL_EURO трябва да е число, 0 или повече');
+  if (!(config.holdMinutes >= 1 && config.holdMinutes <= 24 * 60)) problems.push('REDEMPTION_HOLD_MINUTES трябва да е от 1 до 1440');
   if (problems.length) {
     console.error('Сървърът не тръгва:\n- ' + problems.join('\n- '));
     process.exit(1);
@@ -87,6 +100,13 @@ const mail = createMail(config.mail);
 const weather = createWeather(config.weather);
 const kasa = createKasa(config);
 const app = await buildApp({ db, config, mail, kasa, weather });
+// резервираните награди с минал срок връщат точките си
+setInterval(() => { try { app.expireReservations(); } catch (err) { console.error('Освобождаването на резервациите не мина:', err.message); } }, 60_000).unref();
+// В демото има готова инсталация на каса, за да може конекторът да се пробва веднага. Ключът се показва само сега.
+if (demo && !listSources(db).length) {
+  const s = createSource(db, 'demo-pos-1', 'Пробна каса за демото');
+  console.log(`Демо: инсталация на каса „${s.source_id}“ с ключ ${s.token} (за конектора: SOURCE_ID и SOURCE_TOKEN).`);
+}
 
 // Ако касата може да дава продажбите си, теглим ги на всеки няколко минути.
 async function sync() {

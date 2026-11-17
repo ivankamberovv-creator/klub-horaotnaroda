@@ -245,6 +245,8 @@ function rewardFormFor(r) {
   $('rewardFormTitle').textContent = r ? 'Промяна на награда' : 'Нова награда';
   $('rewardTitle').value = r?.title ?? '';
   $('rewardCost').value = r?.cost_points ?? '';
+  // отстъпката, която касата прилага срещу точките; празно значи, че наградата се дава на ръка
+  $('rewardDiscount').value = r?.discount_cents ? (r.discount_cents / 100).toFixed(2) : '';
   $('rewardDescription').value = r?.description ?? '';
   $('rewardActive').checked = r ? Boolean(r.active) : true;
   show($('rewardErr'), '');
@@ -253,7 +255,8 @@ $('rewardReset').addEventListener('click', () => rewardFormFor(null));
 $('rewardForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const id = $('rewardId').value;
-  const body = { title: $('rewardTitle').value, description: $('rewardDescription').value, cost_points: Number($('rewardCost').value), active: $('rewardActive').checked };
+  const body = { title: $('rewardTitle').value, description: $('rewardDescription').value, cost_points: Number($('rewardCost').value),
+    discount_cents: Math.round(Number($('rewardDiscount').value || 0) * 100), active: $('rewardActive').checked };
   try {
     await api(id ? 'PUT' : 'POST', '/api/admin/rewards' + (id ? '/' + id : ''), body);
     rewardFormFor(null);
@@ -265,8 +268,9 @@ async function loadRewards() {
   $('rewardRows').replaceChildren(...rewards.map((r) => el('tr', { class: r.active ? '' : 'off' },
     el('td', {}, el('b', {}, r.title), r.active ? '' : ' (спряна)'),
     el('td', { class: 'num' }, String(r.cost_points)),
+    el('td', { class: 'num' }, r.discount_cents ? (r.discount_cents / 100).toFixed(2).replace('.', ',') + ' €' : 'на ръка'),
     el('td', {}, el('button', { class: 'btn ghost small', type: 'button', onclick: () => { rewardFormFor(r); $('rewardTitle').focus(); } }, 'Променете')))));
-  if (!rewards.length) $('rewardRows').replaceChildren(el('tr', {}, el('td', { colspan: '3', class: 'muted' }, 'Още няма награди.')));
+  if (!rewards.length) $('rewardRows').replaceChildren(el('tr', {}, el('td', { colspan: '4', class: 'muted' }, 'Още няма награди.')));
 }
 
 // ---- мисии ----

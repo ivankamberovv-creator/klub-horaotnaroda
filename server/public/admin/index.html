@@ -100,13 +100,14 @@
         <div class="row">
           <label>Име<input id="rewardTitle" maxlength="80" required></label>
           <label>Точки<input id="rewardCost" type="number" min="1" step="1" required></label>
+          <label>Отстъпка на касата, € (празно: дава се на ръка)<input id="rewardDiscount" type="number" min="0" step="0.01" inputmode="decimal"></label>
         </div>
         <label>Описание<textarea id="rewardDescription" maxlength="300"></textarea></label>
         <label><span><input id="rewardActive" type="checkbox" checked style="width:auto;min-height:0"> Предлага се</span></label>
         <p class="err" id="rewardErr" role="alert" hidden></p>
         <div class="row"><button class="btn fit" type="submit">Запазете</button><button class="btn ghost fit" type="button" id="rewardReset">Изчистете</button></div>
       </form>
-      <div class="tablewrap"><table><thead><tr><th>Награда</th><th class="num">Точки</th><th></th></tr></thead><tbody id="rewardRows"></tbody></table></div>
+      <div class="tablewrap"><table><thead><tr><th>Награда</th><th class="num">Точки</th><th class="num">На касата</th><th></th></tr></thead><tbody id="rewardRows"></tbody></table></div>
     </section>
 
     <section id="tab-challenges" class="stack" hidden>

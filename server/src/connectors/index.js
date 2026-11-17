@@ -3,9 +3,11 @@
 // discountCents, purchasedAt, items: [{ name, quantity, totalCents }] }] (или null, ако няма откъде да тегли).
 import { createDemoKasa } from './demo.js';
 import { createYanakKasa } from './yanak.js';
+import { createVamibexKasa } from './vamibex.js';
 
 export function createKasa(config) {
   if (config.kasa === 'demo') return createDemoKasa();
   if (config.kasa === 'yanak') return createYanakKasa(config.yanak);
-  throw new Error(`Непозната каса „${config.kasa}“. Възможни са: demo, yanak.`);
+  if (config.kasa === 'vamibex') return createVamibexKasa();
+  throw new Error(`Непозната каса „${config.kasa}“. Възможни са: demo, vamibex, yanak.`);
 }

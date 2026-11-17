@@ -1,6 +1,7 @@
 // Цялата логика на клуба: вход с имейл, кодове за касата, точки, промоции, награди и покупки.
 // Функциите приемат базата като първи аргумент и не знаят нищо за HTTP.
 import crypto from 'node:crypto';
+import { newCustomerRef } from './db.js';
 
 export const nowIso = () => new Date().toISOString();
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
@@ -28,11 +29,12 @@ export const isValidEan13 = (code) => /^\d{13}$/.test(code) && ean13CheckDigit(c
 
 /** Нов код за клиент: EAN-13 с префикс за вътрешна употреба (20–29) и 10 случайни цифри, за да не се отгатва чужд код. */
 export function newCardCode(db, prefix = '29') {
-  const exists = db.prepare('SELECT 1 FROM customers WHERE card_code = ?');
+  // гледа се и в cards: код на стара, сменена карта не се дава втори път
+  const exists = db.prepare('SELECT 1 FROM customers WHERE card_code = @code UNION ALL SELECT 1 FROM cards WHERE code = @code');
   for (;;) {
     const body = String(crypto.randomInt(0, 10 ** 10)).padStart(10, '0');
     const code = prefix + body + ean13CheckDigit(prefix + body);
-    if (!exists.get(code)) return code;
+    if (!exists.get({ code })) return code;
   }
 }
 
@@ -78,8 +80,10 @@ export function verifyCode(db, rawEmail, code, { cardPrefix = '29', sessionDays 
     let customer = db.prepare('SELECT * FROM customers WHERE email = ?').get(email);
     const isNew = !customer;
     if (isNew) {
-      const info = db.prepare('INSERT INTO customers (email, card_code, created_at) VALUES (?, ?, ?)')
-        .run(email, newCardCode(db, cardPrefix), nowIso());
+      const at = nowIso(), cardCode = newCardCode(db, cardPrefix);
+      const info = db.prepare('INSERT INTO customers (email, card_code, customer_ref, created_at) VALUES (?, ?, ?, ?)')
+        .run(email, cardCode, newCustomerRef(db), at);
+      db.prepare("INSERT INTO cards (code, customer_id, status, created_at) VALUES (?, ?, 'active', ?)").run(cardCode, info.lastInsertRowid, at);
       customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(info.lastInsertRowid);
     }
     return { token: createSession(db, 'customer', customer.id, sessionDays * 24 * 60), customer, isNew };
@@ -115,6 +119,36 @@ export const getCustomer = (db, id) => db.prepare('SELECT * FROM customers WHERE
 export const getCustomerByCard = (db, code) => db.prepare('SELECT * FROM customers WHERE card_code = ?').get(String(code ?? '').trim());
 export const balance = (db, customerId) =>
   db.prepare('SELECT COALESCE(SUM(delta), 0) n FROM points_ledger WHERE customer_id = ?').get(customerId).n;
+
+/**
+ * Намира клиента по това, което касата е получила: постоянния му код (customer_ref) или код на негова карта.
+ * Връща { customer, card }: card е редът от cards, ако е търсено по карта (може да е сменена: status = replaced).
+ * Кодът се сравнява точно, с буквите както са: така го пази и касата.
+ */
+export function findMember(db, rawCode) {
+  const code = String(rawCode ?? '').trim();
+  if (!code) return null;
+  const byRef = db.prepare('SELECT * FROM customers WHERE customer_ref = ?').get(code);
+  if (byRef) return { customer: byRef, card: null };
+  const card = db.prepare('SELECT * FROM cards WHERE code = ?').get(code);
+  return card ? { customer: getCustomer(db, card.customer_id), card } : null;
+}
+
+/**
+ * Нова карта на мястото на изгубена или повредена. Профилът, точките, историята и customer_ref остават;
+ * старият код спира да важи (остава в cards като replaced, за да личи чий е бил).
+ */
+export function replaceCard(db, customerId, prefix = '29') {
+  return db.transaction(() => {
+    const c = getCustomer(db, customerId);
+    if (!c) throw new AppError('no_customer', 'Няма такъв клиент.', 404);
+    const at = nowIso(), code = newCardCode(db, prefix);
+    db.prepare("UPDATE cards SET status = 'replaced', replaced_at = ? WHERE customer_id = ? AND status = 'active'").run(at, customerId);
+    db.prepare("INSERT INTO cards (code, customer_id, status, created_at) VALUES (?, ?, 'active', ?)").run(code, customerId, at);
+    db.prepare('UPDATE customers SET card_code = ? WHERE id = ?').run(code, customerId);
+    return getCustomer(db, customerId);
+  })();
+}
 
 export function setName(db, customerId, rawName) {
   const name = String(rawName ?? '').replace(/\s+/g, ' ').trim();
@@ -180,7 +214,8 @@ export function pointsHistory(db, customerId, limit = 100) {
   const rows = db.prepare(`
     SELECT l.id, l.delta, l.reason, l.ref, l.created_at,
            CASE WHEN l.reason = 'purchase' THEN (SELECT shop FROM purchases p WHERE p.id = CAST(l.ref AS INTEGER)) END shop,
-           CASE WHEN l.reason IN ('reward','reward_refund') THEN (SELECT reward_title FROM redemptions r WHERE r.id = CAST(l.ref AS INTEGER)) END reward,
+           CASE WHEN l.reason IN ('reward','reward_refund') AND l.ref LIKE 'pos-%' THEN (SELECT reward_title FROM pos_redemptions r WHERE r.id = substr(l.ref, 5))
+                WHEN l.reason IN ('reward','reward_refund') THEN (SELECT reward_title FROM redemptions r WHERE r.id = CAST(l.ref AS INTEGER)) END reward,
            CASE WHEN l.reason = 'bonus' AND l.ref LIKE 'challenge-%' THEN (SELECT title FROM challenges ch WHERE ch.id = CAST(substr(l.ref, 11) AS INTEGER)) END challenge
     FROM points_ledger l WHERE l.customer_id = ? ORDER BY l.id DESC LIMIT ?`).all(customerId, limit);
   const label = (r) => (r.reason === 'purchase' ? `Покупка${r.shop ? ': ' + r.shop : ''}`
@@ -188,7 +223,8 @@ export function pointsHistory(db, customerId, limit = 100) {
       : r.reason === 'reward_refund' ? `Върнати точки: ${r.reward ?? ''}`.trim()
         : r.reason === 'bonus' ? (r.ref === 'welcome' ? 'Добре дошли в клуба' : String(r.ref).startsWith('birthday-') ? 'Честит рожден ден'
           : String(r.ref).startsWith('scratch-') ? 'Талон за изтриване' : String(r.ref).startsWith('challenge-') ? `Изпълнена мисия${r.challenge ? ': ' + r.challenge : ''}` : 'Подарък от клуба')
-          : 'Корекция от магазина');
+          : r.reason === 'refund' ? 'Върната покупка'
+            : 'Корекция от магазина');
   return rows.map((r) => ({ id: r.id, delta: r.delta, label: label(r), at: r.created_at }));
 }
 
@@ -293,7 +329,9 @@ export function pointsFor(db, customerId, totalCents, at, pointsPerEuro = 1) {
 
 /**
  * Записва покупка, дошла от касата, и начислява точките. Втори запис на същия документ не прави нищо.
- * p: { source, externalId, cardCode | customerId, shop, totalCents, discountCents, purchasedAt, items: [{ name, quantity, totalCents }] }
+ * p: { source, externalId, cardCode | customerId, shop, totalCents, discountCents, purchasedAt, items: [{ name, sku, quantity, totalCents }],
+ *      storeCode, registerCode, pointsBaseCents }
+ * pointsBaseCents е сумата, върху която се смятат точките, когато част от артикулите не носят точки; иначе е цялата сума.
  */
 export function recordPurchase(db, p, { pointsPerEuro = 1, scratch = null, welcomePoints = 0 } = {}) {
   return db.transaction(() => {
@@ -303,11 +341,11 @@ export function recordPurchase(db, p, { pointsPerEuro = 1, scratch = null, welco
     if (existing) return { purchase: existing, duplicate: true };
     if (!Number.isInteger(p.totalCents) || p.totalCents < 0) throw new AppError('bad_total', 'Сумата на покупката не е вярна.');
     const at = p.purchasedAt || nowIso();
-    const points = pointsFor(db, customer.id, p.totalCents, at, pointsPerEuro);
-    const id = db.prepare(`INSERT INTO purchases (source, external_id, customer_id, shop, total_cents, discount_cents, points_earned, purchased_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(p.source, String(p.externalId), customer.id, p.shop || '', p.totalCents, p.discountCents || 0, points, at, nowIso()).lastInsertRowid;
-    const addItem = db.prepare('INSERT INTO purchase_items (purchase_id, name, quantity, total_cents) VALUES (?, ?, ?, ?)');
-    for (const it of p.items || []) addItem.run(id, String(it.name), Number(it.quantity) || 1, it.totalCents);
+    const points = pointsFor(db, customer.id, p.pointsBaseCents ?? p.totalCents, at, pointsPerEuro);
+    const id = db.prepare(`INSERT INTO purchases (source, external_id, customer_id, shop, total_cents, discount_cents, points_earned, purchased_at, created_at, store_code, register_code)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(p.source, String(p.externalId), customer.id, p.shop || '', p.totalCents, p.discountCents || 0, points, at, nowIso(), p.storeCode || '', p.registerCode || '').lastInsertRowid;
+    const addItem = db.prepare('INSERT INTO purchase_items (purchase_id, name, sku, quantity, total_cents) VALUES (?, ?, ?, ?, ?)');
+    for (const it of p.items || []) addItem.run(id, String(it.name), String(it.sku ?? ''), Number(it.quantity) || 1, it.totalCents);
     if (points) {
       db.prepare("INSERT INTO points_ledger (customer_id, delta, reason, ref, created_at) VALUES (?, ?, 'purchase', ?, ?)")
         .run(customer.id, points, String(id), nowIso());
@@ -459,7 +497,7 @@ export function customerSummary(db, customerId, { pointsPerEuro = 1, welcomePoin
   const points = balance(db, customerId);
   const next = listRewards(db).find((r) => r.cost_points > points);
   return {
-    id: c.id, name: c.name, email: c.email, cardCode: c.card_code, points, pointsPerEuro,
+    id: c.id, name: c.name, email: c.email, cardCode: c.card_code, customerRef: c.customer_ref, points, pointsPerEuro,
     // подаръкът за добре дошли, който още чака първата покупка; 0, ако няма такъв или вече е даден
     welcomePoints: welcomePoints > 0 && !db.prepare("SELECT 1 FROM points_ledger WHERE customer_id = ? AND reason = 'bonus' AND ref = 'welcome'").get(customerId) ? welcomePoints : 0,
     birthday: formatBirthday(c.birthday), favoriteStoreId: c.favorite_store_id ?? null, unreadNews: unreadNews(db, c),
@@ -544,16 +582,19 @@ function rewardFields(b) {
   if (title.length < 2) throw new AppError('bad_title', 'Напишете име на наградата.');
   const cost = Number(b.cost_points);
   if (!Number.isInteger(cost) || cost < 1 || cost > 1_000_000) throw new AppError('bad_cost', 'Точките трябва да са цяло число над нула.');
-  return { title, description: text(b.description, 300), cost_points: cost, active: b.active === false || b.active === 0 ? 0 : 1 };
+  // отстъпката в евроцентове, която касата прилага срещу точките; 0 значи, че наградата се дава на ръка
+  const discount = Number(b.discount_cents ?? 0);
+  if (!Number.isInteger(discount) || discount < 0 || discount > 1_000_000) throw new AppError('bad_discount', 'Отстъпката на наградата не е вярна.');
+  return { title, description: text(b.description, 300), cost_points: cost, discount_cents: discount, active: b.active === false || b.active === 0 ? 0 : 1 };
 }
 export const adminListRewards = (db) => db.prepare('SELECT * FROM rewards ORDER BY cost_points, id').all();
 export function adminSaveReward(db, body, id = null) {
   const f = rewardFields(body);
   if (id === null) {
-    id = db.prepare('INSERT INTO rewards (title, description, cost_points, active, created_at) VALUES (@title, @description, @cost_points, @active, @created_at)')
+    id = db.prepare('INSERT INTO rewards (title, description, cost_points, discount_cents, active, created_at) VALUES (@title, @description, @cost_points, @discount_cents, @active, @created_at)')
       .run({ ...f, created_at: nowIso() }).lastInsertRowid;
   } else {
-    const done = db.prepare('UPDATE rewards SET title=@title, description=@description, cost_points=@cost_points, active=@active WHERE id=@id').run({ ...f, id });
+    const done = db.prepare('UPDATE rewards SET title=@title, description=@description, cost_points=@cost_points, discount_cents=@discount_cents, active=@active WHERE id=@id').run({ ...f, id });
     if (!done.changes) throw new AppError('no_reward', 'Няма такава награда.', 404);
   }
   return db.prepare('SELECT * FROM rewards WHERE id = ?').get(id);
@@ -579,7 +620,7 @@ export const adminStats = (db) => ({
 // ---- магазини ----
 
 const storeOut = (s) => ({ id: s.id, name: s.name, city: s.city, address: s.address, phone: s.phone, hours: JSON.parse(s.hours),
-  lat: s.lat, lng: s.lng, ...(s.active === undefined ? {} : { active: s.active }) });
+  lat: s.lat, lng: s.lng, ...(s.active === undefined ? {} : { active: s.active, pos_code: s.pos_code ?? '' }) });
 export const listStores = (db) => db.prepare('SELECT id, name, city, address, phone, hours, lat, lng FROM stores WHERE active = 1 ORDER BY city, name').all().map(storeOut);
 export const adminListStores = (db) => db.prepare('SELECT * FROM stores ORDER BY city, name').all().map(storeOut);
 
@@ -600,16 +641,19 @@ function storeFields(b) {
   };
   const phone = text(b.phone, 20);
   if (phone && !/^\+?[\d ]{6,20}$/.test(phone)) throw new AppError('bad_phone', 'Телефонът на магазина не е верен.');
+  // store_code на магазина в касата, за да излиза покупката с името му
+  const posCode = String(b.pos_code ?? '').trim();
+  if (posCode && !/^[A-Za-z0-9_.-]{1,64}$/.test(posCode)) throw new AppError('bad_pos_code', 'Кодът на магазина в касата не е верен.');
   return { name, city: text(b.city, 60), address: text(b.address, 160), phone, hours: JSON.stringify(hours),
-    lat: coord(b.lat, 90), lng: coord(b.lng, 180), active: b.active === false || b.active === 0 ? 0 : 1 };
+    lat: coord(b.lat, 90), lng: coord(b.lng, 180), active: b.active === false || b.active === 0 ? 0 : 1, pos_code: posCode };
 }
 export function adminSaveStore(db, body, id = null) {
   const f = storeFields(body);
   if (id === null) {
-    id = db.prepare(`INSERT INTO stores (name, city, address, phone, hours, lat, lng, active, created_at)
-      VALUES (@name, @city, @address, @phone, @hours, @lat, @lng, @active, @created_at)`).run({ ...f, created_at: nowIso() }).lastInsertRowid;
+    id = db.prepare(`INSERT INTO stores (name, city, address, phone, hours, lat, lng, active, pos_code, created_at)
+      VALUES (@name, @city, @address, @phone, @hours, @lat, @lng, @active, @pos_code, @created_at)`).run({ ...f, created_at: nowIso() }).lastInsertRowid;
   } else {
-    const done = db.prepare('UPDATE stores SET name=@name, city=@city, address=@address, phone=@phone, hours=@hours, lat=@lat, lng=@lng, active=@active WHERE id=@id').run({ ...f, id });
+    const done = db.prepare('UPDATE stores SET name=@name, city=@city, address=@address, phone=@phone, hours=@hours, lat=@lat, lng=@lng, active=@active, pos_code=@pos_code WHERE id=@id').run({ ...f, id });
     if (!done.changes) throw new AppError('no_store', 'Няма такъв магазин.', 404);
   }
   return storeOut(db.prepare('SELECT * FROM stores WHERE id = ?').get(id));

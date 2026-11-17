@@ -1,0 +1,1323 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Клуб „Хора от Народа“: връзка с касата Vamibex POS",
+    "version": "1.0.0",
+    "description": "Адресите, през които касовата програма Vamibex POS работи с програмата за лоялност. Събитията ги праща локалният конектор на всяка каса; останалите адреси са за следващия етап на касата (проверка на членство и награди). Сумите са в цели евроцентове. Грешките са във вида { error, message }: error е код за програмата, message е текст за човек."
+  },
+  "servers": [
+    {
+      "url": "https://АДРЕСЪТ-НА-КЛУБА",
+      "description": "Сървърът на клуба (адресът предстои)"
+    }
+  ],
+  "security": [
+    {
+      "sourceToken": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Събития"
+    },
+    {
+      "name": "Членство"
+    },
+    {
+      "name": "Награди"
+    }
+  ],
+  "paths": {
+    "/api/loyalty/v1/openapi.json": {
+      "get": {
+        "tags": [
+          "Събития"
+        ],
+        "summary": "Това описание",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.0 в JSON"
+          }
+        }
+      }
+    },
+    "/api/loyalty/v1/events": {
+      "post": {
+        "tags": [
+          "Събития"
+        ],
+        "summary": "Приема събитие от локалния конектор на каса",
+        "description": "Записът на събитието, покупката и точките е едно цяло. Уникалността е по среда, retailer_code и event.id: повторено събитие връща status=duplicate и първоначалния ефект остава. Поддържани видове: sale.completed (версия 1, по договора на POS 0.6.11) и sale.refunded (версия 1, ПРЕДЛОЖЕН формат за връщанията, още не е договорен).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventEnvelope"
+              },
+              "examples": {
+                "SaleCompleted": {
+                  "$ref": "#/components/examples/SaleCompleted"
+                },
+                "SaleRefunded": {
+                  "$ref": "#/components/examples/SaleRefunded"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Обработено сега (applied) или вече е било обработено (duplicate).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventResult"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Непозната версия или невалидни данни: събитието е прибрано за преглед (quarantined) и не е приложено. Конекторът продължава напред; същото събитие може да се прати пак след поправка.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Липсва event.id, тялото не е обект или средата е непозната.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Липсващ или невалиден ключ на инсталацията.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "source_id не отговаря на ключа.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/loyalty/v1/members/resolve": {
+      "post": {
+        "tags": [
+          "Членство"
+        ],
+        "summary": "Намира постоянния код на клиента по сканирана или въведена карта",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "retailer_code",
+                  "card_code"
+                ],
+                "properties": {
+                  "retailer_code": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+                  },
+                  "environment": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                    "description": "Среда на касата: simulation или production. Всяка среда има отделни клиенти, точки и събития. Без нея се ползва средата на приложението."
+                  },
+                  "card_code": {
+                    "type": "string",
+                    "description": "Баркодът на картата от приложението (EAN-13) или самият customer_ref.",
+                    "example": "2912345678905"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Клиентът е намерен.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "customer_ref",
+                    "membership_status",
+                    "balance_points"
+                  ],
+                  "properties": {
+                    "customer_ref": {
+                      "type": "string",
+                      "nullable": true,
+                      "example": "L-7K3M9QXA",
+                      "description": "Постоянният код; null, ако картата е сменена."
+                    },
+                    "membership_status": {
+                      "type": "string",
+                      "enum": [
+                        "active",
+                        "card_replaced"
+                      ]
+                    },
+                    "balance_points": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Няма клиент с такъв код (member_not_found) или търговецът е непознат (unknown_retailer).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Липсващ или невалиден ключ на инсталацията.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Невалидна заявка или непозната среда.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/loyalty/v1/rewards/quote": {
+      "post": {
+        "tags": [
+          "Награди"
+        ],
+        "summary": "Кои награди може да вземе клиентът за тази кошница",
+        "description": "Връща само наградите с отстъпка за касата, за които стигат свободните точки и чиято отстъпка не надхвърля сумата. Не променя нищо.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "retailer_code",
+                  "customer_ref",
+                  "total_cents"
+                ],
+                "properties": {
+                  "retailer_code": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+                  },
+                  "environment": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                    "description": "Среда на касата: simulation или production. Всяка среда има отделни клиенти, точки и събития. Без нея се ползва средата на приложението."
+                  },
+                  "customer_ref": {
+                    "type": "string"
+                  },
+                  "sale_id": {
+                    "type": "string"
+                  },
+                  "revision": {
+                    "type": "integer"
+                  },
+                  "store_code": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+                  },
+                  "register_code": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "enum": [
+                      "EUR"
+                    ]
+                  },
+                  "total_cents": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Цели евроцентове: 1020 е 10,20 EUR."
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/SaleItem"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Допустимите награди.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "customer_ref": {
+                      "type": "string"
+                    },
+                    "balance_points": {
+                      "type": "integer"
+                    },
+                    "currency": {
+                      "type": "string",
+                      "enum": [
+                        "EUR"
+                      ]
+                    },
+                    "valid_until": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "Докога важи тази оферта."
+                    },
+                    "rewards": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "reward_id": {
+                            "type": "integer"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "points": {
+                            "type": "integer",
+                            "description": "Нужни точки"
+                          },
+                          "discount_cents": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Цели евроцентове: 1020 е 10,20 EUR."
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Непознат клиент или търговец.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Картата е сменена (card_replaced).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Липсващ или невалиден ключ на инсталацията.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Невалидна заявка или непозната среда.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/loyalty/v1/redemptions": {
+      "post": {
+        "tags": [
+          "Награди"
+        ],
+        "summary": "Резервира награда за кошница",
+        "description": "Точките излизат от общото салдо веднага, затова не могат да се изхарчат едновременно в друг магазин. За една кошница (sale_id) може да има само една действаща резервация. Заглавката Idempotency-Key тук е задължителна.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "description": "От 1 до 128 видими знака без интервали. Повторение със същия ключ и същите данни връща първия отговор (и когато той е отказ); със същия ключ и други данни отговорът е 422. Ключовете са отделни за всяка инсталация."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "retailer_code",
+                  "customer_ref",
+                  "reward_id",
+                  "sale_id"
+                ],
+                "properties": {
+                  "retailer_code": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+                  },
+                  "environment": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                    "description": "Среда на касата: simulation или production. Всяка среда има отделни клиенти, точки и събития. Без нея се ползва средата на приложението."
+                  },
+                  "customer_ref": {
+                    "type": "string"
+                  },
+                  "reward_id": {
+                    "type": "integer"
+                  },
+                  "sale_id": {
+                    "type": "string",
+                    "description": "Номерът на кошницата"
+                  },
+                  "revision": {
+                    "type": "integer"
+                  },
+                  "store_code": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+                  },
+                  "register_code": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+                  },
+                  "total_cents": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Цели евроцентове: 1020 е 10,20 EUR."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Резервирана.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Redemption"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Непознат клиент, търговец или награда.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "not_enough_points, sale_has_redemption, discount_exceeds_total или card_replaced.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Този Idempotency-Key вече е използван с други данни.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Липсващ или невалиден ключ на инсталацията.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Невалидна заявка или непозната среда.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/loyalty/v1/redemptions/{id}/begin": {
+      "post": {
+        "tags": [
+          "Награди"
+        ],
+        "summary": "Плащането започва",
+        "description": "Преминава в begun: оттук резервацията не изтича сама, а чака окончателен резултат. Трябва да е потвърдено, преди касата да приложи отстъпката при плащане. Повторение връща същото състояние.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "redemption_id от резервацията"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "description": "От 1 до 128 видими знака без интервали. Повторение със същия ключ и същите данни връща първия отговор (и когато той е отказ); със същия ключ и други данни отговорът е 422. Ключовете са отделни за всяка инсталация."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "environment": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                    "description": "Среда на касата: simulation или production. Всяка среда има отделни клиенти, точки и събития. Без нея се ползва средата на приложението."
+                  },
+                  "sale_id": {
+                    "type": "string"
+                  },
+                  "revision": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Състоянието след действието.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Redemption"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Няма такава резервация.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "wrong_state (изтекла, освободена или приключена) или sale_mismatch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Липсващ или невалиден ключ на инсталацията.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Невалидна заявка или непозната среда.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/loyalty/v1/redemptions/{id}/commit": {
+      "post": {
+        "tags": [
+          "Награди"
+        ],
+        "summary": "Продажбата е приключила: наградата е окончателно осребрена",
+        "description": "Приема се само след begin. Свързва резервацията с продажбата и събитието sale.completed. Ако конекторът донесе sale.completed за същата кошница преди това повикване, резервацията приключва сама.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "redemption_id от резервацията"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "description": "От 1 до 128 видими знака без интервали. Повторение със същия ключ и същите данни връща първия отговор (и когато той е отказ); със същия ключ и други данни отговорът е 422. Ключовете са отделни за всяка инсталация."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "sale_id"
+                ],
+                "properties": {
+                  "environment": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                    "description": "Среда на касата: simulation или production. Всяка среда има отделни клиенти, точки и събития. Без нея се ползва средата на приложението."
+                  },
+                  "sale_id": {
+                    "type": "string"
+                  },
+                  "event_id": {
+                    "type": "string",
+                    "description": "id на sale.completed"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Състоянието след действието.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Redemption"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Няма такава резервация.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "wrong_state, sale_mismatch или event_mismatch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Липсващ или невалиден ключ на инсталацията.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Невалидна заявка или непозната среда.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/loyalty/v1/redemptions/{id}/release": {
+      "post": {
+        "tags": [
+          "Награди"
+        ],
+        "summary": "Наградата няма да се ползва: точките се връщат",
+        "description": "Работи от reserved и от begun (при доказан отказ). След приключена продажба не е възможно. Повторение не връща точките втори път.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "redemption_id от резервацията"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "description": "От 1 до 128 видими знака без интервали. Повторение със същия ключ и същите данни връща първия отговор (и когато той е отказ); със същия ключ и други данни отговорът е 422. Ключовете са отделни за всяка инсталация."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "environment": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                    "description": "Среда на касата: simulation или production. Всяка среда има отделни клиенти, точки и събития. Без нея се ползва средата на приложението."
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Състоянието след действието.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Redemption"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Няма такава резервация.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "wrong_state: резервацията вече е приключена с продажба.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Липсващ или невалиден ключ на инсталацията.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Невалидна заявка или непозната среда.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/loyalty/v1/redemptions/{id}": {
+      "get": {
+        "tags": [
+          "Награди"
+        ],
+        "summary": "Действителното състояние, за сверяване след прекъсване",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "redemption_id от резервацията"
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Средата; без нея е тази, с която работи приложението."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Състоянието.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Redemption"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Няма такава резервация.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Липсващ или невалиден ключ на инсталацията.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Невалидна заявка или непозната среда.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "sourceToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Ключът на инсталацията на касата (source_id), издаден от управлението на клуба. Различен е от ключа VAMIBEX_LOYALTY_TOKEN на самата каса."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "example": "not_enough_points"
+          },
+          "message": {
+            "type": "string",
+            "example": "Не достигат 20 точки."
+          }
+        }
+      },
+      "SaleItem": {
+        "type": "object",
+        "required": [
+          "sku",
+          "quantity",
+          "total_cents"
+        ],
+        "properties": {
+          "sku": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "number",
+            "description": "В POS 0.6.11 са цели бройки."
+          },
+          "total_cents": {
+            "type": "integer",
+            "description": "Общата стойност на реда."
+          }
+        }
+      },
+      "EventEnvelope": {
+        "type": "object",
+        "required": [
+          "source_id",
+          "environment",
+          "event"
+        ],
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+            "description": "Постоянното име на инсталацията; трябва да отговаря на ключа."
+          },
+          "environment": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+            "description": "Среда на касата: simulation или production. Всяка среда има отделни клиенти, точки и събития. Без нея се ползва средата на приложението."
+          },
+          "event": {
+            "type": "object",
+            "description": "Целият обект от масива events на касата, без промяна.",
+            "required": [
+              "id",
+              "type",
+              "schema_version",
+              "retailer_code",
+              "store_code",
+              "register_code",
+              "occurred_at",
+              "data"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "sequence": {
+                "type": "integer"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "sale.completed",
+                  "sale.refunded"
+                ]
+              },
+              "schema_version": {
+                "type": "integer",
+                "enum": [
+                  1
+                ]
+              },
+              "retailer_code": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+              },
+              "store_code": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+              },
+              "register_code": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+              },
+              "occurred_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "data": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SaleCompletedData"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SaleRefundedData"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "SaleCompletedData": {
+        "type": "object",
+        "required": [
+          "sale_id",
+          "currency",
+          "total_cents",
+          "items"
+        ],
+        "properties": {
+          "sale_id": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "EUR"
+            ]
+          },
+          "total_cents": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Цели евроцентове: 1020 е 10,20 EUR."
+          },
+          "customer_ref": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "description": "Постоянният код на клиента или баркодът на картата му."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SaleItem"
+            }
+          }
+        }
+      },
+      "SaleRefundedData": {
+        "type": "object",
+        "description": "ПРЕДЛОЖЕН формат за връщане на стока; точният вид се договаря с касата преди реално свързване.",
+        "required": [
+          "refund_id",
+          "original_sale_id",
+          "refunded_cents"
+        ],
+        "properties": {
+          "refund_id": {
+            "type": "string",
+            "description": "Постоянен номер на корекцията; действа само веднъж."
+          },
+          "original_sale_id": {
+            "type": "string"
+          },
+          "original_event_id": {
+            "type": "string"
+          },
+          "customer_ref": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "EUR"
+            ]
+          },
+          "refunded_cents": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Действително възстановената сума."
+          },
+          "full": {
+            "type": "boolean",
+            "description": "Пълно връщане."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SaleItem"
+            }
+          },
+          "confirmed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redemption_id": {
+            "type": "string",
+            "description": "Осребрената награда по тази продажба; при пълно връщане точките ѝ се възстановяват."
+          }
+        }
+      },
+      "EventResult": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "status"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "applied",
+              "duplicate",
+              "quarantined"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "description": "При applied/duplicate: points, zero_points, unknown_customer, no_customer_ref, card_replaced, sale_already_recorded, refund, refund_already_applied, unknown_sale. При quarantined: причината, например unknown_schema_version, unknown_type, unknown_retailer, unsupported_currency, bad_total."
+          },
+          "points": {
+            "type": "integer",
+            "description": "Начислени (или взети обратно, с минус) точки."
+          }
+        }
+      },
+      "Redemption": {
+        "type": "object",
+        "required": [
+          "redemption_id",
+          "status",
+          "reserved_points",
+          "discount_cents"
+        ],
+        "properties": {
+          "redemption_id": {
+            "type": "string",
+            "example": "rd_0f3a9c1b2d4e5f6a7b8c9d0e"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "reserved",
+              "begun",
+              "committed",
+              "released",
+              "expired",
+              "reversed"
+            ],
+            "description": "reserved: точките са заделени, плащането не е започнало; begun: плащането е започнало и се чака окончателен резултат (не изтича сама); committed: продажбата е приключила; released: отказана, точките са върнати; expired: срокът е минал преди започване, точките са върнати; reversed: продажбата е върната изцяло, точките са върнати."
+          },
+          "reserved_points": {
+            "type": "integer"
+          },
+          "discount_cents": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Цели евроцентове: 1020 е 10,20 EUR."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Докога важи резервацията, докато е reserved; иначе null."
+          },
+          "customer_ref": {
+            "type": "string",
+            "nullable": true
+          },
+          "reward_id": {
+            "type": "integer",
+            "nullable": true
+          },
+          "reward_title": {
+            "type": "string"
+          },
+          "sale_id": {
+            "type": "string"
+          },
+          "sale_revision": {
+            "type": "integer",
+            "nullable": true
+          },
+          "store_code": {
+            "type": "string"
+          },
+          "register_code": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "sale.completed, с което е приключила."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "begun_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "resolved_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      }
+    },
+    "examples": {
+      "SaleCompleted": {
+        "summary": "Приключена продажба (примерът от POS 0.6.11)",
+        "value": {
+          "source_id": "east-pos-1",
+          "environment": "simulation",
+          "event": {
+            "id": "sale.completed:0123456789abcdef0123456789abcdef",
+            "sequence": 42,
+            "type": "sale.completed",
+            "schema_version": 1,
+            "retailer_code": "HORA",
+            "store_code": "EAST",
+            "register_code": "POS-1",
+            "occurred_at": "2026-11-17T10:00:00.000+00:00",
+            "data": {
+              "sale_id": "0123456789abcdef0123456789abcdef",
+              "currency": "EUR",
+              "total_cents": 1020,
+              "customer_ref": "L-1042",
+              "items": [
+                {
+                  "sku": "P-01",
+                  "quantity": 2,
+                  "total_cents": 240
+                },
+                {
+                  "sku": "P-02",
+                  "quantity": 1,
+                  "total_cents": 780
+                }
+              ]
+            }
+          }
+        }
+      },
+      "SaleRefunded": {
+        "summary": "Връщане на стока (предложен формат)",
+        "value": {
+          "source_id": "east-pos-1",
+          "environment": "simulation",
+          "event": {
+            "id": "sale.refunded:R-2026-000017",
+            "sequence": 57,
+            "type": "sale.refunded",
+            "schema_version": 1,
+            "retailer_code": "HORA",
+            "store_code": "EAST",
+            "register_code": "POS-1",
+            "occurred_at": "2026-11-18T09:00:00.000+00:00",
+            "data": {
+              "refund_id": "R-2026-000017",
+              "original_sale_id": "0123456789abcdef0123456789abcdef",
+              "original_event_id": "sale.completed:0123456789abcdef0123456789abcdef",
+              "customer_ref": "L-1042",
+              "currency": "EUR",
+              "refunded_cents": 240,
+              "full": false,
+              "items": [
+                {
+                  "sku": "P-01",
+                  "quantity": 2,
+                  "total_cents": 240
+                }
+              ],
+              "confirmed_at": "2026-11-18T09:00:00.000+00:00"
+            }
+          }
+        }
+      }
+    }
+  }
+}

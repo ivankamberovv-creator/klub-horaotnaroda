@@ -4,13 +4,15 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { randomBytes } from 'node:crypto';
 
 // Клиентът влиза с имейл (малки букви) и еднократен код, пратен на него.
 const customersTable = (name) => `CREATE TABLE IF NOT EXISTS ${name} (
   id INTEGER PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL DEFAULT '',
-  card_code TEXT NOT NULL UNIQUE,      -- кодът, който касата сканира (EAN-13)
+  card_code TEXT NOT NULL UNIQUE,      -- кодът, който касата сканира (EAN-13); сегашната карта, всички карти са в cards
+  customer_ref TEXT,                   -- постоянният код на клиента пред касата (Vamibex POS): не се сменя при нова карта
   kasa_id TEXT,                        -- номерът на клиента в касовата програма, когато бъде вързана
   birthday TEXT,                       -- само месец и ден, „ММ-ДД“; годината не се пита
   birthday_set_at TEXT,
@@ -18,6 +20,8 @@ const customersTable = (name) => `CREATE TABLE IF NOT EXISTS ${name} (
   news_seen_at TEXT,                   -- докога клиентът е прочел новините
   created_at TEXT NOT NULL
 );`;
+
+const LEDGER_REASONS = "'purchase','reward','reward_refund','bonus','adjustment','refund'";
 
 const SCHEMA = `
 ${customersTable('customers')}
@@ -110,7 +114,7 @@ CREATE TABLE IF NOT EXISTS points_ledger (
   id INTEGER PRIMARY KEY,
   customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
   delta INTEGER NOT NULL,
-  reason TEXT NOT NULL CHECK (reason IN ('purchase','reward','reward_refund','bonus','adjustment')),
+  reason TEXT NOT NULL CHECK (reason IN (${LEDGER_REASONS})),
   ref TEXT,
   created_at TEXT NOT NULL
 );
@@ -170,6 +174,100 @@ CREATE TABLE IF NOT EXISTS challenge_completions (
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+
+-- ---- връзка с касовата програма Vamibex POS (вижте docs/vamibex-pos.md) ----
+
+-- Всички карти на клиента. При смяна старата става replaced, а профилът, точките и customer_ref остават.
+CREATE TABLE IF NOT EXISTS cards (
+  code TEXT PRIMARY KEY,
+  customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('active','replaced')),
+  created_at TEXT NOT NULL,
+  replaced_at TEXT
+);
+CREATE INDEX IF NOT EXISTS cards_customer ON cards(customer_id);
+-- Инсталациите на каси, които пращат събития: всяка има постоянен source_id и свой ключ (пази се само отпечатъкът му).
+CREATE TABLE IF NOT EXISTS pos_sources (
+  source_id TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  note TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT,
+  last_sequence INTEGER              -- докъде е стигнала касата по своя журнал (за наблюдение)
+);
+-- Всяко получено събитие от касата, точно веднъж. status: applied (обработено, може и с 0 точки),
+-- quarantined (непозната версия или невалидни данни: чака преглед и може да се прати пак).
+CREATE TABLE IF NOT EXISTS pos_events (
+  id INTEGER PRIMARY KEY,
+  retailer_code TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT '',
+  schema_version INTEGER,
+  sequence INTEGER,
+  store_code TEXT NOT NULL DEFAULT '',
+  register_code TEXT NOT NULL DEFAULT '',
+  occurred_at TEXT,
+  payload TEXT NOT NULL,              -- събитието, както е дошло (JSON)
+  status TEXT NOT NULL CHECK (status IN ('applied','quarantined')),
+  outcome TEXT NOT NULL DEFAULT '',   -- points, zero_points, unknown_customer, refund… или причината за карантината
+  customer_id INTEGER,
+  purchase_id INTEGER,
+  points INTEGER NOT NULL DEFAULT 0,
+  received_at TEXT NOT NULL,
+  UNIQUE (retailer_code, event_id)
+);
+CREATE INDEX IF NOT EXISTS pos_events_status ON pos_events(status, id);
+-- Награда, осребрена на касата: reserved → begun → committed, или released / expired.
+-- Точките се взимат от книгата още при резервацията и се връщат при освобождаване.
+CREATE TABLE IF NOT EXISTS pos_redemptions (
+  id TEXT PRIMARY KEY,                -- rd_…
+  retailer_code TEXT NOT NULL,
+  customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  reward_id INTEGER,
+  reward_title TEXT NOT NULL,
+  points INTEGER NOT NULL,
+  discount_cents INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('reserved','begun','committed','released','expired','reversed')),
+  source_id TEXT NOT NULL,
+  store_code TEXT NOT NULL DEFAULT '',
+  register_code TEXT NOT NULL DEFAULT '',
+  sale_id TEXT NOT NULL,              -- кошницата, за която е резервирана
+  sale_revision INTEGER,
+  event_id TEXT,                      -- sale.completed, с което е приключила
+  release_reason TEXT,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,           -- важи само докато е reserved; започнато плащане не изтича само
+  begun_at TEXT,
+  resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS pos_redemptions_customer ON pos_redemptions(customer_id, status);
+CREATE INDEX IF NOT EXISTS pos_redemptions_sale ON pos_redemptions(sale_id);
+-- Връщания на стока: всяка корекция има свой постоянен номер и действа само веднъж.
+CREATE TABLE IF NOT EXISTS purchase_refunds (
+  id INTEGER PRIMARY KEY,
+  retailer_code TEXT NOT NULL,
+  refund_id TEXT NOT NULL,
+  purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+  refunded_cents INTEGER NOT NULL,
+  points_delta INTEGER NOT NULL,      -- колко точки са взети обратно (отрицателно или 0)
+  full_refund INTEGER NOT NULL DEFAULT 0,
+  confirmed_at TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (retailer_code, refund_id)
+);
+-- Повторена заявка със същия Idempotency-Key връща същия отговор.
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  source_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  route TEXT NOT NULL,
+  body_hash TEXT NOT NULL,
+  status INTEGER NOT NULL,
+  response TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (source_id, key)
 );
 `;
 
@@ -238,15 +336,16 @@ function upgrade(db) {
   add('promotions', 'image_url', "TEXT NOT NULL DEFAULT ''");
   add('promotions', 'weather', "TEXT NOT NULL DEFAULT ''");
   if (!has(db, 'customers', 'email')) customersToEmail(db);
-  // в първата версия книгата с точките не допускаше причина „bonus“; правилото се сменя само с нова таблица
+  // книгата с точките допуска само изброени причини; нова причина („bonus“, после „refund“ за върната стока)
+  // се добавя само с нова таблица. Записите се пренасят без промяна.
   const ledger = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'points_ledger'").get().sql;
-  if (!ledger.includes("'bonus'")) {
+  if (!ledger.includes("'refund'")) {
     db.transaction(() => {
       db.exec(`CREATE TABLE points_ledger_new (
         id INTEGER PRIMARY KEY,
         customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
         delta INTEGER NOT NULL,
-        reason TEXT NOT NULL CHECK (reason IN ('purchase','reward','reward_refund','bonus','adjustment')),
+        reason TEXT NOT NULL CHECK (reason IN (${LEDGER_REASONS})),
         ref TEXT,
         created_at TEXT NOT NULL
       );
@@ -255,6 +354,36 @@ function upgrade(db) {
       ALTER TABLE points_ledger_new RENAME TO points_ledger;
       CREATE INDEX IF NOT EXISTS points_ledger_customer ON points_ledger(customer_id);`);
     })();
+  }
+  // ---- за Vamibex POS ----
+  add('customers', 'customer_ref', 'TEXT');
+  add('purchases', 'store_code', "TEXT NOT NULL DEFAULT ''");
+  add('purchases', 'register_code', "TEXT NOT NULL DEFAULT ''");
+  add('purchases', 'refunded_cents', 'INTEGER NOT NULL DEFAULT 0');
+  add('purchase_items', 'sku', "TEXT NOT NULL DEFAULT ''");
+  add('rewards', 'discount_cents', 'INTEGER NOT NULL DEFAULT 0'); // отстъпката, която касата прилага; 0 = наградата се дава на ръка
+  add('stores', 'pos_code', "TEXT NOT NULL DEFAULT ''");          // store_code на магазина в касата
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS customers_ref ON customers(customer_ref)');
+  // клиентите отпреди връзката получават постоянен код, а сегашната им карта влиза в списъка с карти
+  const bezKod = db.prepare('SELECT id FROM customers WHERE customer_ref IS NULL').all();
+  if (bezKod.length) {
+    db.transaction(() => {
+      const set = db.prepare('UPDATE customers SET customer_ref = ? WHERE id = ?');
+      for (const c of bezKod) set.run(newCustomerRef(db), c.id);
+    })();
+  }
+  db.exec(`INSERT OR IGNORE INTO cards (code, customer_id, status, created_at) SELECT card_code, id, 'active', created_at FROM customers`);
+}
+
+// Постоянният код на клиента пред касата: „L-“ и 8 знака без лесно бърканите 0, O, 1, I.
+// Влиза в правилото на касата за customer_ref ([A-Za-z0-9_-], до 64 знака) и винаги е с главни букви.
+const REF_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export function newCustomerRef(db) {
+  const exists = db.prepare('SELECT 1 FROM customers WHERE customer_ref = ?');
+  for (;;) {
+    let ref = 'L-';
+    for (const b of randomBytes(8)) ref += REF_ALPHABET[b % REF_ALPHABET.length];
+    if (!exists.get(ref)) return ref;
   }
 }
 

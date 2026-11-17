@@ -7,6 +7,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { saveImage } from './uploads.js';
 import * as core from './core.js';
+import { openDb } from './db.js';
+import { registerLoyaltyApi } from './loyalty-api.js';
+import { expireReservations } from './loyalty.js';
 
 const { AppError } = core;
 const id = (v) => {
@@ -64,7 +67,25 @@ export async function buildApp({ db, config, mail, kasa, weather = { at: async (
     return core.customerSummary(db, customerId, opts);
   };
 
-  app.get('/api/health', async () => ({ ok: true, demo: Boolean(config.demo), kasa: kasa.name }));
+  app.get('/api/health', async () => ({ ok: true, demo: Boolean(config.demo), kasa: kasa.name, environment: config.environment ?? 'production' }));
+
+  // ---- средите на касата ----
+  // Приложението работи с една среда (config.environment). Събитията от другата среда на касата
+  // (например пробната simulation при истински сървър) отиват в отделна база със свои клиенти и точки.
+  const environments = config.environments ?? ['production', 'simulation'];
+  const live = config.environment ?? 'production';
+  const bases = new Map([[live, db]]);
+  const dbFor = (environment) => {
+    if (!environments.includes(environment)) return null;
+    if (!bases.has(environment)) {
+      const path = !config.dbPath || config.dbPath === ':memory:' ? ':memory:' : config.dbPath.replace(/(\.[^./\\]+)?$/, `.${environment}$1`);
+      bases.set(environment, openDb(path));
+    }
+    return bases.get(environment);
+  };
+  // резервациите с минал срок се освобождават и без никой да пита за тях
+  app.decorate('expireReservations', () => { for (const base of bases.values()) expireReservations(base); });
+  registerLoyaltyApi(app, { db, config, dbFor, staff });
 
   // ---- вход на клиента ----
   app.post('/api/auth/request-code', async (req) => {
